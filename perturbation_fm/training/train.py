@@ -177,7 +177,7 @@ def train(cfg: Dict) -> None:
     # ------------------------------------------------------------------
     best_val_loss = float("inf")
     patience_counter = 0
-    loss_history: Dict[str, list] = {"train_fm": [], "train_nb": [], "val_loss": []}
+    loss_history: Dict[str, list] = {"train_fm": [], "train_nb": [], "val_fm": [], "val_nb": []}
 
     print("\n=== Training ===")
     for epoch in range(1, cfg["n_epochs"] + 1):
@@ -209,7 +209,7 @@ def train(cfg: Dict) -> None:
 
         # ---- Validate ----
         model.eval()
-        val_losses = []
+        val_fm_losses, val_nb_losses = [], []
         with torch.no_grad():
             for x0, x1_log1p, x1_counts, esm_emb in val_loader:
                 x0 = x0.to(device)
@@ -217,20 +217,24 @@ def train(cfg: Dict) -> None:
                 x1_counts = x1_counts.to(device)
                 esm_emb = esm_emb.to(device)
                 result = model.compute_loss(x0, x1_log1p, x1_counts, esm_emb)
-                val_losses.append(result["loss"].item())
+                val_fm_losses.append(result["loss_fm"])
+                val_nb_losses.append(result["loss_nb"])
 
-        val_loss = float(np.mean(val_losses))
-        elapsed = time.time() - t0
+        val_fm   = float(np.mean(val_fm_losses))
+        val_nb   = float(np.mean(val_nb_losses))
+        val_loss = val_fm + cfg["lambda_nb"] * val_nb
+        elapsed  = time.time() - t0
 
         print(
             f"Epoch {epoch:4d}/{cfg['n_epochs']} | "
             f"train FM: {mean_fm:.4f}  NB: {mean_nb:.4f} | "
-            f"val: {val_loss:.4f} | {elapsed:.1f}s"
+            f"val FM: {val_fm:.4f}  NB: {val_nb:.4f} | {elapsed:.1f}s"
         )
 
         loss_history["train_fm"].append(mean_fm)
         loss_history["train_nb"].append(mean_nb)
-        loss_history["val_loss"].append(val_loss)
+        loss_history["val_fm"].append(val_fm)
+        loss_history["val_nb"].append(val_nb)
 
         # ---- Full perturbation eval every 5 epochs ----
         if epoch % 5 == 0:
@@ -245,9 +249,11 @@ def train(cfg: Dict) -> None:
             )
             model.train()
 
-        # ---- Checkpointing ----
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        # ---- Checkpointing — track FM loss only for early stopping ----
+        # NB loss converges in epoch 1-2 and dominates the combined metric,
+        # which would trigger early stopping before the flow network learns.
+        if val_fm < best_val_loss:
+            best_val_loss = val_fm
             patience_counter = 0
             ckpt_path = save_dir / "best_model.pt"
             torch.save(
@@ -255,12 +261,12 @@ def train(cfg: Dict) -> None:
                     "epoch": epoch,
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
-                    "val_loss": val_loss,
+                    "val_fm": val_fm,
                     "cfg": cfg,
                 },
                 ckpt_path,
             )
-            print(f"  ✓ Saved best model  (val_loss={best_val_loss:.4f})")
+            print(f"  ✓ Saved best model  (val_fm={best_val_loss:.4f})")
         else:
             patience_counter += 1
             if patience_counter >= cfg["patience"]:

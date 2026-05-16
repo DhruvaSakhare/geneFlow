@@ -13,7 +13,7 @@ batch_size:   256
 lr:           1.0e-4
 weight_decay: 1.0e-5
 n_epochs:     100
-patience:     15        # early-stopping patience on val loss
+patience:     30        # early-stopping patience on val FM loss
 grad_clip:    1.0
 
 # Inference / evaluation
