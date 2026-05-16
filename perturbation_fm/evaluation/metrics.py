@@ -19,6 +19,30 @@ def pearson_lfc(pred_lfc: np.ndarray, true_lfc: np.ndarray) -> float:
     return float(r)
 
 
+def weighted_cosine_lfc(
+    pred_lfc: np.ndarray,
+    true_lfc: np.ndarray,
+    gate_low: float = 0.0,
+    gate_high: float = 0.2,
+    eps: float = 1e-12,
+) -> float:
+    """Weighted cosine similarity with smoothstep gating on gene activity.
+
+    Only genes where max(|pred|, |true|) > gate_low contribute, with full
+    weight above gate_high. Focuses on DE genes, ignoring the ~96% near-zero.
+    """
+    x = np.maximum(np.abs(pred_lfc), np.abs(true_lfc))
+    t = np.clip((x - gate_low) / (gate_high - gate_low), 0.0, 1.0)
+    w = t * t * (3.0 - 2.0 * t)  # smoothstep
+    w2 = w * w
+
+    num = float(np.sum(w2 * pred_lfc * true_lfc))
+    den = float(np.sqrt(np.sum(w2 * pred_lfc ** 2)) * np.sqrt(np.sum(w2 * true_lfc ** 2)))
+    if den < eps:
+        return 0.0
+    return float(num / den)
+
+
 def top_k_deg_jaccard(
     pred_lfc: np.ndarray,
     true_lfc: np.ndarray,
@@ -124,24 +148,28 @@ def evaluate_perturbation(
     model.eval()
     out = model.predict(x0_tensor, esm_tensor)
 
-    # c. Use NB mu (expected counts) instead of samples — noise-free prediction.
+    # c. Use NB mu (expected counts) for LFC — noise-free mean prediction.
     mu_np = out["mu"].cpu().float().numpy()
     totals = mu_np.sum(axis=1, keepdims=True)
     totals = np.where(totals == 0, 1.0, totals)
-    pred_log1p = np.log1p(mu_np / totals * 10_000.0)  # (n_sample, n_genes)
+    pred_log1p_mu = np.log1p(mu_np / totals * 10_000.0)  # for LFC
 
-    # d. Predicted LFC.
-    pred_lfc = pred_log1p.mean(axis=0) - ctrl_mean_log1p
+    # ODE endpoint in log1p space for population-level metrics (E-dist, var-corr).
+    pred_log1p = out["x1_log1p"].cpu().float().numpy()
+
+    # d. Predicted LFC from mu (noise-free).
+    pred_lfc = pred_log1p_mu.mean(axis=0) - ctrl_mean_log1p
 
     # e. True LFC.
     true_lfc = true_pert_log1p.mean(axis=0) - ctrl_mean_log1p
 
     return {
-        "pearson_r":     pearson_lfc(pred_lfc, true_lfc),
-        "jaccard_top50": top_k_deg_jaccard(pred_lfc, true_lfc, k=50),
-        "knockdown_ok":  knockdown_consistency(pred_lfc, gene_name, gene_names_list),
-        "e_distance":    e_distance(pred_log1p, true_pert_log1p),
-        "variance_corr": variance_correlation(pred_log1p, true_pert_log1p),
+        "pearson_r":      pearson_lfc(pred_lfc, true_lfc),
+        "weighted_cos":   weighted_cosine_lfc(pred_lfc, true_lfc),
+        "jaccard_top50":  top_k_deg_jaccard(pred_lfc, true_lfc, k=50),
+        "knockdown_ok":   knockdown_consistency(pred_lfc, gene_name, gene_names_list),
+        "e_distance":     e_distance(pred_log1p, true_pert_log1p),
+        "variance_corr":  variance_correlation(pred_log1p, true_pert_log1p),
     }
 
 
@@ -203,26 +231,27 @@ def evaluate_all_perturbations(
         per_pert[gene] = metrics
 
     # Aggregate means (numeric metrics only).
-    numeric_keys = ["pearson_r", "jaccard_top50", "e_distance", "variance_corr"]
+    numeric_keys = ["pearson_r", "weighted_cos", "jaccard_top50", "e_distance", "variance_corr"]
     means = {k: float(np.mean([p[k] for p in per_pert.values()])) for k in numeric_keys}
     means["knockdown_ok_rate"] = float(
         np.mean([float(p["knockdown_ok"]) for p in per_pert.values()])
     )
 
     # Print summary table.
-    header = f"{'Perturbation':<20} {'Pearson r':>10} {'Jaccard@50':>12} {'E-dist':>10} {'Var-corr':>10} {'KD-ok':>7}"
+    header = f"{'Perturbation':<20} {'Pearson r':>10} {'Wtd-cos':>10} {'Jaccard@50':>12} {'E-dist':>10} {'Var-corr':>10} {'KD-ok':>7}"
     print("\n" + header)
     print("-" * len(header))
     for gene, m in sorted(per_pert.items()):
         print(
-            f"{gene:<20} {m['pearson_r']:>10.4f} {m['jaccard_top50']:>12.4f} "
-            f"{m['e_distance']:>10.4f} {m['variance_corr']:>10.4f} {str(m['knockdown_ok']):>7}"
+            f"{gene:<20} {m['pearson_r']:>10.4f} {m['weighted_cos']:>10.4f} "
+            f"{m['jaccard_top50']:>12.4f} {m['e_distance']:>10.4f} "
+            f"{m['variance_corr']:>10.4f} {str(m['knockdown_ok']):>7}"
         )
     print("-" * len(header))
     print(
-        f"{'MEAN':<20} {means['pearson_r']:>10.4f} {means['jaccard_top50']:>12.4f} "
-        f"{means['e_distance']:>10.4f} {means['variance_corr']:>10.4f} "
-        f"{means['knockdown_ok_rate']:>7.4f}"
+        f"{'MEAN':<20} {means['pearson_r']:>10.4f} {means['weighted_cos']:>10.4f} "
+        f"{means['jaccard_top50']:>12.4f} {means['e_distance']:>10.4f} "
+        f"{means['variance_corr']:>10.4f} {means['knockdown_ok_rate']:>7.4f}"
     )
 
     return {"mean": means, "per_perturbation": per_pert}
