@@ -1,20 +1,16 @@
 """UMAP visualization of cell-state trajectories under ODE integration.
 
-Stacks control cells, true perturbed cells, and the model's predicted
-ODE trajectory (with intermediate time points) into one UMAP. Draws a
-small number of trajectory lines per perturbation so the flow is visible.
+Plots all 15 val perturbations: control cells (grey dots), true perturbed
+cells (colored dots), model-predicted trajectories (colored lines with
+start/end diamonds). Background scatter via scprep.
 
-Caveat: the model runs in 4721-dim log1p space, not in UMAP space.
-Trajectory lines are the UMAP projection of the actual ODE path — they
-are real points the cell passes through, but their curvature in 2D is a
-UMAP artifact, not a property of the flow.
+Requires: pip install umap-learn scikit-learn scprep
 
 Usage:
     python -m perturbation_fm.evaluation.plot_umap \
         --config perturbation_fm/configs/default.yaml \
         --ckpt /work3/s225191/geneFlow/checkpoints/best_model.pt \
-        --out /work3/s225191/geneFlow/figures/umap.png \
-        --perts LZTR1 NDUFB6 MED13 KAT2A
+        --out /work3/s225191/geneFlow/figures/umap.png
 """
 
 from __future__ import annotations
@@ -28,7 +24,7 @@ import yaml
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
+import scprep
 from sklearn.decomposition import PCA
 from umap import UMAP
 
@@ -44,11 +40,7 @@ def integrate_trajectory(
     n_steps: int = 50,
     n_save: int = 20,
 ) -> torch.Tensor:
-    """Run RK4 ODE and save intermediate states.
-
-    Returns: (n_save + 1, B, n_genes) — start state + n_save intermediates,
-    with baseline_lfc added back at every saved point.
-    """
+    """RK4 ODE with saved intermediate states. Returns (n_save+1, B, n_genes)."""
     device = x0.device
     B = x0.shape[0]
     if esm_emb.dim() == 1:
@@ -56,9 +48,6 @@ def integrate_trajectory(
 
     x = x0.clone().float()
     dt = 1.0 / n_steps
-
-    # Choose which integration steps to save (after step idx, save the state).
-    # Always include the final step. Result is n_save + 1 saved states.
     save_steps = set(np.linspace(1, n_steps, n_save, dtype=int).tolist())
     saved = [x.clone() + model.baseline_lfc]
 
@@ -76,7 +65,7 @@ def integrate_trajectory(
         if (i + 1) in save_steps:
             saved.append(x.clone() + model.baseline_lfc)
 
-    return torch.stack(saved, dim=0)  # (n_save + 1, B, n_genes)
+    return torch.stack(saved, dim=0)
 
 
 def main() -> None:
@@ -84,10 +73,8 @@ def main() -> None:
     parser.add_argument("--config", default="perturbation_fm/configs/default.yaml")
     parser.add_argument("--ckpt",   required=True)
     parser.add_argument("--out",    default="umap.png")
-    parser.add_argument("--perts",  nargs="+",
-                        default=["LZTR1", "NDUFB6", "MED13", "KAT2A"])
-    parser.add_argument("--n_ctrl", type=int, default=300,
-                        help="Control cells included in the background")
+    parser.add_argument("--n_per_pert", type=int, default=100,
+                        help="True cells sampled per perturbation")
     parser.add_argument("--n_traj", type=int, default=15,
                         help="Trajectories drawn per perturbation")
     parser.add_argument("--n_save", type=int, default=20,
@@ -135,47 +122,57 @@ def main() -> None:
     val_genes     = np.asarray(data_dict["val_genes"])
     val_ctrl_mask = data_dict["val_ctrl_mask"]
 
-    perts = [p for p in args.perts if np.any(val_genes == p)]
-    if not perts:
-        raise ValueError(f"None of {args.perts} found in val perturbations")
-    print(f"Plotting perturbations: {perts}")
+    perts = sorted(np.unique(val_genes[~val_ctrl_mask]).tolist())
+    print(f"Plotting {len(perts)} perturbations: {perts}")
 
-    # ------------------------------------------------------------------
-    # Collect cell populations
-    # ------------------------------------------------------------------
     rng = np.random.default_rng(42)
-    ctrl_idx = np.where(val_ctrl_mask)[0]
-    ctrl_idx = rng.choice(ctrl_idx, min(args.n_ctrl, len(ctrl_idx)), replace=False)
-    ctrl_cells = val_log1p[ctrl_idx]                        # (n_ctrl, G)
+    n_per = args.n_per_pert
 
-    # n_traj of the controls are the seeds for trajectories
-    seed_idx = rng.choice(len(ctrl_cells), args.n_traj, replace=False)
-    seed_cells = ctrl_cells[seed_idx]                       # (n_traj, G)
-    seed_t = torch.from_numpy(seed_cells).float().to(device)
-
-    blocks = {"control": ctrl_cells}
-    traj_by_pert = {}
-    true_by_pert = {}
-
+    # ------------------------------------------------------------------
+    # Sample cells (balanced control vs perturbed)
+    # ------------------------------------------------------------------
+    pert_cells = {}
     for pert in perts:
-        mask = (~val_ctrl_mask) & (val_genes == pert)
-        true_by_pert[pert] = val_log1p[mask]                # (n_true, G)
+        idx = np.where((~val_ctrl_mask) & (val_genes == pert))[0]
+        idx = rng.choice(idx, min(n_per, len(idx)), replace=False)
+        pert_cells[pert] = val_log1p[idx]
+    total_pert = sum(len(v) for v in pert_cells.values())
+
+    ctrl_idx = np.where(val_ctrl_mask)[0]
+    ctrl_idx = rng.choice(ctrl_idx, min(total_pert, len(ctrl_idx)), replace=False)
+    ctrl_cells = val_log1p[ctrl_idx]
+    print(f"Control: {len(ctrl_cells)}  | Perturbed total: {total_pert}")
+
+    # Trajectory seed cells (subset of control)
+    seed_idx = rng.choice(len(ctrl_cells), args.n_traj, replace=False)
+    seed_t = torch.from_numpy(ctrl_cells[seed_idx]).float().to(device)
+
+    # ------------------------------------------------------------------
+    # Integrate trajectories per perturbation
+    # ------------------------------------------------------------------
+    traj_by_pert = {}
+    for pert in perts:
         esm_emb = gene_emb_map.get(pert, torch.zeros(cfg["esm_dim"])).to(device)
-        traj = integrate_trajectory(
+        traj_by_pert[pert] = integrate_trajectory(
             model, seed_t, esm_emb,
             n_steps=args.ode_steps, n_save=args.n_save,
-        ).cpu().numpy()                                     # (T, n_traj, G)
-        traj_by_pert[pert] = traj
-        blocks[f"{pert}__true"] = true_by_pert[pert]
-        blocks[f"{pert}__traj"] = traj.reshape(-1, traj.shape[-1])
+        ).cpu().numpy()
+        print(f"  {pert}: traj shape {traj_by_pert[pert].shape}")
 
     # ------------------------------------------------------------------
-    # Stack everything, fit PCA + UMAP once
+    # Stack everything for joint UMAP fit
     # ------------------------------------------------------------------
+    blocks = {"control": ctrl_cells}
+    for pert in perts:
+        blocks[f"{pert}__true"] = pert_cells[pert]
+    for pert in perts:
+        t = traj_by_pert[pert]
+        blocks[f"{pert}__traj"] = t.reshape(-1, t.shape[-1])
+
     names = list(blocks.keys())
     sizes = [blocks[n].shape[0] for n in names]
     X = np.concatenate([blocks[n] for n in names], axis=0)
-    print(f"Total points for UMAP: {X.shape[0]} ({dict(zip(names, sizes))})")
+    print(f"Total UMAP points: {X.shape[0]}")
 
     print("PCA → 50 components...")
     X_pca = PCA(n_components=50, random_state=42).fit_transform(X)
@@ -186,83 +183,72 @@ def main() -> None:
         n_neighbors=30, min_dist=0.3,
     ).fit_transform(X_pca)
 
-    # Split back into named slices
     offsets = np.cumsum([0] + sizes)
     slices = {n: X_umap[offsets[i]:offsets[i + 1]] for i, n in enumerate(names)}
 
     # ------------------------------------------------------------------
-    # Plot
+    # Plot: scprep background + trajectory overlay
     # ------------------------------------------------------------------
-    fig, ax = plt.subplots(figsize=(11, 9))
+    # Build a stacked array of all background points (control + true) with labels.
+    bg_xy = [slices["control"]]
+    bg_labels = ["control"] * len(slices["control"])
+    for pert in perts:
+        bg_xy.append(slices[f"{pert}__true"])
+        bg_labels += [pert] * len(slices[f"{pert}__true"])
+    bg_xy = np.concatenate(bg_xy, axis=0)
+    bg_labels = np.array(bg_labels)
 
-    pert_colors = plt.cm.tab10(np.linspace(0, 1, len(perts)))
-    pert_color_map = dict(zip(perts, pert_colors))
+    # Color map: control = grey, perturbations = hsv-spread
+    pert_colors = plt.cm.tab20(np.linspace(0, 1, len(perts)))
+    color_map = {p: pert_colors[i] for i, p in enumerate(perts)}
+    color_map["control"] = (0.75, 0.75, 0.75, 1.0)
+    cmap_list = [color_map[lab] for lab in ["control"] + perts]
 
-    # Background: control cells
-    ctrl_xy = slices["control"]
-    ax.scatter(
-        ctrl_xy[:, 0], ctrl_xy[:, 1],
-        c="lightgrey", s=12, alpha=0.5, marker="o",
-        linewidths=0, zorder=1, label=None,
+    fig, ax = plt.subplots(figsize=(13, 10))
+
+    scprep.plot.scatter2d(
+        bg_xy,
+        c=bg_labels,
+        cmap=cmap_list,
+        s=8,
+        alpha=0.6,
+        ax=ax,
+        legend_title="Perturbation",
+        legend_anchor=(1.02, 1.0),
+        legend_loc="upper left",
+        ticks=False,
+        label_prefix=None,
+        xlabel="UMAP 1",
+        ylabel="UMAP 2",
     )
 
+    # Overlay trajectories
     for pert in perts:
-        color = pert_color_map[pert]
-
-        # True perturbed cells (triangles)
-        true_xy = slices[f"{pert}__true"]
-        ax.scatter(
-            true_xy[:, 0], true_xy[:, 1],
-            c=[color], s=35, alpha=0.7, marker="^",
-            edgecolors="black", linewidths=0.4, zorder=2,
-        )
-
-        # Trajectories (lines + endpoint diamonds)
-        traj_xy = slices[f"{pert}__traj"].reshape(
-            args.n_save + 1, args.n_traj, 2
-        )  # (T, n_traj, 2)
+        color = color_map[pert]
+        traj_xy = slices[f"{pert}__traj"].reshape(args.n_save + 1, args.n_traj, 2)
 
         for i in range(args.n_traj):
             ax.plot(
                 traj_xy[:, i, 0], traj_xy[:, i, 1],
-                c=color, alpha=0.6, linewidth=0.8, zorder=3,
+                c=color, alpha=0.5, linewidth=0.7, zorder=3,
             )
-        # Start diamonds (brown, all perts share)
-        ax.scatter(
-            traj_xy[0, :, 0], traj_xy[0, :, 1],
-            c="brown", s=70, marker="D", edgecolors="black", linewidths=0.5,
-            zorder=4,
-        )
         # End diamonds (per-pert color)
         ax.scatter(
             traj_xy[-1, :, 0], traj_xy[-1, :, 1],
-            c=[color], s=70, marker="D", edgecolors="black", linewidths=0.5,
-            zorder=4,
+            c=[color], s=55, marker="D",
+            edgecolors="black", linewidths=0.4, zorder=4,
         )
+    # Start diamonds (shared, brown) — drawn once
+    start_xy = slices[f"{perts[0]}__traj"].reshape(args.n_save + 1, args.n_traj, 2)[0]
+    ax.scatter(
+        start_xy[:, 0], start_xy[:, 1],
+        c="brown", s=70, marker="D",
+        edgecolors="black", linewidths=0.5, zorder=5,
+    )
 
-    # Legends
-    pert_patches = [mpatches.Patch(color=pert_color_map[p], label=p) for p in perts]
-    type_handles = [
-        plt.scatter([], [], c="lightgrey", s=30, marker="o", label="Control"),
-        plt.scatter([], [], c="grey", s=40, marker="^",
-                    edgecolors="black", linewidths=0.4, label="True perturbed"),
-        plt.scatter([], [], c="brown", s=60, marker="D",
-                    edgecolors="black", linewidths=0.5, label="Predicted start (x₀)"),
-        plt.scatter([], [], c="grey", s=60, marker="D",
-                    edgecolors="black", linewidths=0.5, label="Predicted end (x₁)"),
-        plt.Line2D([], [], c="grey", linewidth=1.2, label="Predicted trajectory"),
-    ]
-    leg1 = ax.legend(handles=pert_patches, title="Perturbation",
-                     loc="upper left", fontsize=9, frameon=True)
-    ax.add_artist(leg1)
-    ax.legend(handles=type_handles, title="Cell type",
-              loc="upper right", fontsize=9, frameon=True)
-
-    ax.set_xlabel("UMAP 1")
-    ax.set_ylabel("UMAP 2")
     ax.set_title(
         "Predicted cell-state trajectories under CRISPRi perturbation\n"
-        f"(ODE integrated in 4721-dim log1p space, projected via PCA → UMAP)"
+        "(brown ◆ = start, colored ◆ = predicted endpoint, lines = ODE path)"
     )
     ax.spines[["top", "right"]].set_visible(False)
 
