@@ -165,20 +165,6 @@ def train(cfg: Dict) -> None:
         lambda_lfc=cfg["lambda_lfc"],
     ).to(device)
 
-    # Compute baseline LFC (mean across all training perturbations) once.
-    # The model learns the residual on top of this.
-    train_log1p_full = data_dict["train_log1p"]
-    train_genes_arr = np.asarray(data_dict["train_genes"])
-    train_ctrl_mask = data_dict["train_ctrl_mask"]
-    ctrl_mean_train = data_dict["ctrl_mean_log1p"]
-    train_perts_unique = np.unique(train_genes_arr[~train_ctrl_mask])
-    _train_lfcs = []
-    for _pert in train_perts_unique:
-        _mask = (~train_ctrl_mask) & (train_genes_arr == _pert)
-        _train_lfcs.append(train_log1p_full[_mask].mean(axis=0) - ctrl_mean_train)
-    baseline_lfc_vec = np.mean(_train_lfcs, axis=0)
-    model.set_baseline_lfc(torch.from_numpy(baseline_lfc_vec).to(device))
-    print(f"Baseline LFC computed: mean |LFC| = {np.abs(baseline_lfc_vec).mean():.4f}")
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"\nModel parameters: {n_params:,}")
