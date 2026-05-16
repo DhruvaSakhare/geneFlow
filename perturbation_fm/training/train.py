@@ -275,10 +275,9 @@ def train(cfg: Dict) -> None:
             )
             model.train()
 
-        # ---- Checkpointing — track val LFC loss for early stopping ----
+        # ---- Checkpointing — save best by val LFC, no early stopping ----
         if val_lfc < best_val_loss:
             best_val_loss = val_lfc
-            patience_counter = 0
             ckpt_path = save_dir / "best_model.pt"
             torch.save(
                 {
@@ -291,11 +290,6 @@ def train(cfg: Dict) -> None:
                 ckpt_path,
             )
             print(f"  ✓ Saved best model  (val_lfc={best_val_loss:.4f})")
-        else:
-            patience_counter += 1
-            if patience_counter >= cfg["patience"]:
-                print(f"Early stopping at epoch {epoch} (patience={cfg['patience']}).")
-                break
 
     # Save loss history.
     with open(save_dir / "loss_history.json", "w") as f:
