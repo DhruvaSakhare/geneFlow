@@ -124,11 +124,11 @@ def evaluate_perturbation(
     model.eval()
     out = model.predict(x0_tensor, esm_tensor)
 
-    # c. Convert sampled counts to log1p space for population-level metrics.
-    counts_np = out["counts"].cpu().float().numpy()
-    totals = counts_np.sum(axis=1, keepdims=True)
+    # c. Use NB mu (expected counts) instead of samples — noise-free prediction.
+    mu_np = out["mu"].cpu().float().numpy()
+    totals = mu_np.sum(axis=1, keepdims=True)
     totals = np.where(totals == 0, 1.0, totals)
-    pred_log1p = np.log1p(counts_np / totals * 10_000.0)  # (n_sample, n_genes)
+    pred_log1p = np.log1p(mu_np / totals * 10_000.0)  # (n_sample, n_genes)
 
     # d. Predicted LFC.
     pred_lfc = pred_log1p.mean(axis=0) - ctrl_mean_log1p
