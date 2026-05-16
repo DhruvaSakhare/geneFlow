@@ -160,6 +160,7 @@ def train(cfg: Dict) -> None:
         num_layers=cfg["num_layers"],
         dropout=cfg["dropout"],
         lambda_nb=cfg["lambda_nb"],
+        lambda_lfc=cfg["lambda_lfc"],
     ).to(device)
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -180,7 +181,7 @@ def train(cfg: Dict) -> None:
     # ------------------------------------------------------------------
     best_val_loss = float("inf")
     patience_counter = 0
-    loss_history: Dict[str, list] = {"train_fm": [], "train_nb": [], "val_fm": [], "val_nb": []}
+    loss_history: Dict[str, list] = {"train_fm": [], "train_lfc": [], "train_nb": [], "val_fm": [], "val_lfc": [], "val_nb": []}
 
     print("\n=== Training ===")
     for epoch in range(1, cfg["n_epochs"] + 1):
@@ -188,7 +189,7 @@ def train(cfg: Dict) -> None:
 
         # ---- Train ----
         model.train()
-        train_fm_losses, train_nb_losses = [], []
+        train_fm_losses, train_lfc_losses, train_nb_losses = [], [], []
 
         for x0, x1_log1p, x1_counts, esm_emb in train_loader:
             x0 = x0.to(device)
@@ -203,16 +204,18 @@ def train(cfg: Dict) -> None:
             optimizer.step()
 
             train_fm_losses.append(result["loss_fm"])
+            train_lfc_losses.append(result["loss_lfc"])
             train_nb_losses.append(result["loss_nb"])
 
         scheduler.step()
 
-        mean_fm = float(np.mean(train_fm_losses))
-        mean_nb = float(np.mean(train_nb_losses))
+        mean_fm  = float(np.mean(train_fm_losses))
+        mean_lfc = float(np.mean(train_lfc_losses))
+        mean_nb  = float(np.mean(train_nb_losses))
 
         # ---- Validate ----
         model.eval()
-        val_fm_losses, val_nb_losses = [], []
+        val_fm_losses, val_lfc_losses, val_nb_losses = [], [], []
         with torch.no_grad():
             for x0, x1_log1p, x1_counts, esm_emb in val_loader:
                 x0 = x0.to(device)
@@ -221,22 +224,25 @@ def train(cfg: Dict) -> None:
                 esm_emb = esm_emb.to(device)
                 result = model.compute_loss(x0, x1_log1p, x1_counts, esm_emb)
                 val_fm_losses.append(result["loss_fm"])
+                val_lfc_losses.append(result["loss_lfc"])
                 val_nb_losses.append(result["loss_nb"])
 
-        val_fm   = float(np.mean(val_fm_losses))
-        val_nb   = float(np.mean(val_nb_losses))
-        val_loss = val_fm + cfg["lambda_nb"] * val_nb
-        elapsed  = time.time() - t0
+        val_fm  = float(np.mean(val_fm_losses))
+        val_lfc = float(np.mean(val_lfc_losses))
+        val_nb  = float(np.mean(val_nb_losses))
+        elapsed = time.time() - t0
 
         print(
             f"Epoch {epoch:4d}/{cfg['n_epochs']} | "
-            f"train FM: {mean_fm:.4f}  NB: {mean_nb:.4f} | "
-            f"val FM: {val_fm:.4f}  NB: {val_nb:.4f} | {elapsed:.1f}s"
+            f"train FM: {mean_fm:.4f}  LFC: {mean_lfc:.4f}  NB: {mean_nb:.4f} | "
+            f"val FM: {val_fm:.4f}  LFC: {val_lfc:.4f}  NB: {val_nb:.4f} | {elapsed:.1f}s"
         )
 
         loss_history["train_fm"].append(mean_fm)
+        loss_history["train_lfc"].append(mean_lfc)
         loss_history["train_nb"].append(mean_nb)
         loss_history["val_fm"].append(val_fm)
+        loss_history["val_lfc"].append(val_lfc)
         loss_history["val_nb"].append(val_nb)
 
         # ---- Full perturbation eval every 5 epochs ----

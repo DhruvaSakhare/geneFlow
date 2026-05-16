@@ -33,9 +33,11 @@ class PerturbationFlowModel(nn.Module):
         num_layers: int = 8,
         dropout: float = 0.1,
         lambda_nb: float = 0.1,
+        lambda_lfc: float = 1.0,
     ) -> None:
         super().__init__()
         self.lambda_nb = lambda_nb
+        self.lambda_lfc = lambda_lfc
         self.flow_net = FlowNet(n_genes, esm_dim, hidden_dim, num_layers, dropout)
         self.nb_head = NBHead(n_genes)
 
@@ -105,16 +107,31 @@ class PerturbationFlowModel(nn.Module):
             weights = weights / weights.mean()             # mean weight = 1
         loss_fm = (F.mse_loss(u_pred, u_target, reduction="none") * weights).mean()
 
+        # 6. Per-perturbation mean-LFC loss.
+        # FM loss penalizes individual velocity errors. This penalizes the mean
+        # velocity per perturbation group — directly optimizing what Pearson r
+        # measures. Uses already-computed u_pred so no extra forward pass.
+        lfc_losses = []
+        for p_idx in inverse_idx.unique():
+            group = torch.where(inverse_idx == p_idx)[0]
+            if len(group) < 2:
+                continue
+            pred_mean = u_pred[group].mean(dim=0)
+            true_mean = u_target[group].mean(dim=0)
+            lfc_losses.append(F.mse_loss(pred_mean, true_mean))
+        loss_lfc = torch.stack(lfc_losses).mean() if lfc_losses else torch.tensor(0.0, device=device)
+
         # 7–8. NB head trained on TRUE x1 (not predicted)
         mu, theta = self.nb_head(x1_log1p)
         loss_nb = nb_nll(x1_counts, mu, theta)
 
         # 9. Combined loss
-        loss = loss_fm + self.lambda_nb * loss_nb
+        loss = loss_fm + self.lambda_lfc * loss_lfc + self.lambda_nb * loss_nb
 
         return {
             "loss": loss,
             "loss_fm": loss_fm.item(),
+            "loss_lfc": loss_lfc.item(),
             "loss_nb": loss_nb.item(),
         }
 
