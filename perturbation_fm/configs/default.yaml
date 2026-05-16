@@ -1,0 +1,30 @@
+# PerturbationFlowModel — default hyperparameters
+
+# Model architecture
+n_genes:    null        # filled automatically after preprocessing
+esm_dim:    480         # ESM-2 35M output dimension
+hidden_dim: 512
+num_layers: 8
+dropout:    0.1
+lambda_nb:  0.1         # weight on the NB loss term
+
+# Optimisation
+batch_size:   256
+lr:           1.0e-4
+weight_decay: 1.0e-5
+n_epochs:     100
+patience:     15        # early-stopping patience on val loss
+grad_clip:    1.0
+
+# Inference / evaluation
+n_inference_cells: 1000   # control cells sampled per perturbation at eval
+ode_steps:         50     # RK4 integration steps
+
+# Reproducibility
+seed: 42
+
+# Paths (relative to repo root: geneFlow/)
+train_path: data/training.h5ad
+val_path:   data/validation.h5ad
+emb_path:   embeddings/esm2_embeddings.pt
+save_dir:   checkpoints/
