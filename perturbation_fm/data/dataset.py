@@ -74,4 +74,5 @@ def get_dataloader(
         num_workers=num_workers,
         pin_memory=pin_memory,
         drop_last=True,
+        persistent_workers=num_workers > 0,
     )

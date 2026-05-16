@@ -131,10 +131,12 @@ def train(cfg: Dict) -> None:
     )
 
     train_loader = get_dataloader(
-        train_dataset, batch_size=cfg["batch_size"], shuffle=True
+        train_dataset, batch_size=cfg["batch_size"], shuffle=True,
+        num_workers=4, pin_memory=True,
     )
     val_loader = get_dataloader(
-        val_dataset, batch_size=cfg["batch_size"], shuffle=False
+        val_dataset, batch_size=cfg["batch_size"], shuffle=False,
+        num_workers=4, pin_memory=True,
     )
 
     print(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")

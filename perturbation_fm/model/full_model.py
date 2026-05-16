@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Dict
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -69,11 +68,10 @@ class PerturbationFlowModel(nn.Module):
         # Reorder x0 so each (x0, x1) pair minimises total ||x0 - x1||².
         # This straightens trajectories and reduces velocity field variance.
         with torch.no_grad():
-            C = torch.cdist(x0, x1_log1p).cpu().numpy()          # (B, B)
-            row_idx, col_idx = linear_sum_assignment(C)
-            row_idx = torch.from_numpy(row_idx).to(device)
+            C = torch.cdist(x0, x1_log1p).cpu().numpy()
+            # Hungarian is O(B³) on CPU; only pay this cost once per batch.
+            _, col_idx = linear_sum_assignment(C)
             col_idx = torch.from_numpy(col_idx).to(device)
-        x0        = x0[row_idx]
         x1_log1p  = x1_log1p[col_idx]
         x1_counts = x1_counts[col_idx]
         esm_emb   = esm_emb[col_idx]
