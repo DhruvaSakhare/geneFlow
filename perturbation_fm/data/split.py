@@ -50,12 +50,12 @@ def split_by_perturbation(
     assert abs(train_frac + val_frac - 1.0) <= 0.5, \
         "train_frac + val_frac must be <= 1.0"
 
-    ctrl_mask = np.asarray(adata.obs["control"].values, dtype=bool)
+    ctrl_mask = np.asarray(adata.obs["target_gene"].values == "non-targeting", dtype=bool)
     ctrl_adata = adata[ctrl_mask].copy()
 
-    # All unique perturbation genes (excluding control sentinel values).
+    # All unique perturbation genes (excluding non-targeting controls).
     pert_genes = np.asarray(
-        sorted(set(adata.obs.loc[~ctrl_mask, "gene_target"].tolist()))
+        sorted(set(adata.obs.loc[~ctrl_mask, "target_gene"].tolist()))
     )
     n_perts = len(pert_genes)
 
@@ -74,7 +74,7 @@ def split_by_perturbation(
 
     def _subset(gene_set: set) -> AnnData:
         pert_mask = np.asarray(
-            [g in gene_set for g in adata.obs["gene_target"].values]
+            [g in gene_set for g in adata.obs["target_gene"].values]
         ) & (~ctrl_mask)
         # Concatenate matching perturbed cells + all control cells.
         return sc.concat([adata[pert_mask], ctrl_adata], join="outer")

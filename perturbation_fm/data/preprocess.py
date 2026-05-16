@@ -78,17 +78,17 @@ def _select_genes_by_lfc(
     Returns:
         Sorted list of selected gene names.
     """
-    ctrl_mask = np.asarray(adata.obs["control"].values, dtype=bool)
+    ctrl_mask = np.asarray(adata.obs["target_gene"].values == "non-targeting", dtype=bool)
     ctrl_log1p = log1p_layer[ctrl_mask]           # (n_ctrl, n_genes)
     ctrl_mean = ctrl_log1p.mean(axis=0)            # (n_genes,)
 
     gene_names: np.ndarray = np.asarray(adata.var_names)
     selected: set[str] = set()
 
-    perturbations = adata.obs.loc[~ctrl_mask, "gene_target"].unique()
+    perturbations = adata.obs.loc[~ctrl_mask, "target_gene"].unique()
 
     for pert in perturbations:
-        pert_mask = (~ctrl_mask) & (adata.obs["gene_target"].values == pert)
+        pert_mask = (~ctrl_mask) & (adata.obs["target_gene"].values == pert)
         pert_log1p = log1p_layer[pert_mask]        # (n_pert, n_genes)
 
         if pert_log1p.shape[0] == 0:
@@ -185,11 +185,11 @@ def preprocess(
     # ------------------------------------------------------------------
     # 5. Masks and metadata
     # ------------------------------------------------------------------
-    train_ctrl_mask = np.asarray(adata_train.obs["control"].values, dtype=bool)
-    val_ctrl_mask   = np.asarray(adata_val.obs["control"].values,   dtype=bool)
+    train_ctrl_mask = np.asarray(adata_train.obs["target_gene"].values == "non-targeting", dtype=bool)
+    val_ctrl_mask   = np.asarray(adata_val.obs["target_gene"].values   == "non-targeting", dtype=bool)
 
-    train_genes = list(adata_train.obs["gene_target"].values)
-    val_genes   = list(adata_val.obs["gene_target"].values)
+    train_genes = list(adata_train.obs["target_gene"].values)
+    val_genes   = list(adata_val.obs["target_gene"].values)
 
     # Control mean in log1p space (on selected genes, training controls only)
     ctrl_mean_log1p = train_log1p[train_ctrl_mask].mean(axis=0)  # (n_genes,)
