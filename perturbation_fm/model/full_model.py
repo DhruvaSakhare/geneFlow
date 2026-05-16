@@ -40,6 +40,14 @@ class PerturbationFlowModel(nn.Module):
         self.lambda_lfc = lambda_lfc
         self.flow_net = FlowNet(n_genes, esm_dim, hidden_dim, num_layers, dropout)
         self.nb_head = NBHead(n_genes)
+        # baseline_lfc: mean LFC across all training perturbations.
+        # The flow learns the residual on top of this — model only has to predict
+        # the perturbation-specific correction, not the shared stress response.
+        self.register_buffer("baseline_lfc", torch.zeros(n_genes))
+
+    def set_baseline_lfc(self, baseline_lfc: torch.Tensor) -> None:
+        """Set the baseline LFC vector (called once after preprocessing)."""
+        self.baseline_lfc.copy_(baseline_lfc.float())
 
     # ------------------------------------------------------------------
     # Training
@@ -65,6 +73,13 @@ class PerturbationFlowModel(nn.Module):
         """
         B = x0.shape[0]
         device = x0.device
+
+        # 0. Residual prediction: subtract baseline LFC from FM target.
+        # Model learns to predict deviation from average training perturbation,
+        # not the full transport. baseline_lfc is added back during inference.
+        # NB head keeps original x1_log1p for count distribution.
+        x1_log1p_orig = x1_log1p
+        x1_log1p = x1_log1p - self.baseline_lfc
 
         # 1. Per-perturbation OT pairing.
         # Cells with identical esm_emb belong to the same perturbation.
@@ -121,8 +136,8 @@ class PerturbationFlowModel(nn.Module):
             lfc_losses.append(F.mse_loss(pred_mean, true_mean))
         loss_lfc = torch.stack(lfc_losses).mean() if lfc_losses else torch.tensor(0.0, device=device)
 
-        # 7–8. NB head trained on TRUE x1 (not predicted)
-        mu, theta = self.nb_head(x1_log1p)
+        # 7–8. NB head trained on original (non-residual) x1
+        mu, theta = self.nb_head(x1_log1p_orig)
         loss_nb = nb_nll(x1_counts, mu, theta)
 
         # 9. Combined loss
@@ -178,7 +193,8 @@ class PerturbationFlowModel(nn.Module):
             k4 = v(x + k3 * dt,         t_i + dt)
             x = x + (k1 + 2.0 * k2 + 2.0 * k3 + k4) * (dt / 6.0)
 
-        x1_hat = x
+        # Add baseline LFC back: ODE produced the residual prediction.
+        x1_hat = x + self.baseline_lfc
         mu, theta = self.nb_head(x1_hat)
 
         nb_dist = torch.distributions.NegativeBinomial(

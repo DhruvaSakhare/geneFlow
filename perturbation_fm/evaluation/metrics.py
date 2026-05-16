@@ -100,6 +100,49 @@ def variance_correlation(pred_cells: np.ndarray, true_cells: np.ndarray) -> floa
     return float(r)
 
 
+def sliced_wasserstein2(
+    pred_cells: np.ndarray,
+    true_cells: np.ndarray,
+    n_projections: int = 50,
+    n_sub: int = 500,
+    seed: int = 0,
+) -> float:
+    """Sliced Wasserstein-2 distance between two cell populations.
+
+    Projects onto random 1D directions, computes W2 on each (sorted L2 distance),
+    averages across projections. Natural metric for flow matching since FM is
+    connected to optimal transport.
+    """
+    rng = np.random.default_rng(seed)
+
+    if len(pred_cells) > n_sub:
+        pred_cells = pred_cells[rng.choice(len(pred_cells), n_sub, replace=False)]
+    if len(true_cells) > n_sub:
+        true_cells = true_cells[rng.choice(len(true_cells), n_sub, replace=False)]
+
+    d = pred_cells.shape[1]
+    projections = rng.standard_normal(size=(n_projections, d))
+    projections /= np.linalg.norm(projections, axis=1, keepdims=True)
+
+    p_proj = pred_cells @ projections.T  # (n_pred, n_projections)
+    t_proj = true_cells @ projections.T  # (n_true, n_projections)
+
+    p_sorted = np.sort(p_proj, axis=0)
+    t_sorted = np.sort(t_proj, axis=0)
+
+    # Resample to common length if needed.
+    n = min(p_sorted.shape[0], t_sorted.shape[0])
+    if p_sorted.shape[0] != n:
+        idx = np.linspace(0, p_sorted.shape[0] - 1, n).astype(int)
+        p_sorted = p_sorted[idx]
+    if t_sorted.shape[0] != n:
+        idx = np.linspace(0, t_sorted.shape[0] - 1, n).astype(int)
+        t_sorted = t_sorted[idx]
+
+    w2_per_proj = np.mean((p_sorted - t_sorted) ** 2, axis=0)
+    return float(np.sqrt(w2_per_proj.mean()))
+
+
 # ---------------------------------------------------------------------------
 # Per-perturbation evaluation
 # ---------------------------------------------------------------------------
@@ -170,6 +213,7 @@ def evaluate_perturbation(
         "knockdown_ok":   knockdown_consistency(pred_lfc, gene_name, gene_names_list),
         "e_distance":     e_distance(pred_log1p, true_pert_log1p),
         "variance_corr":  variance_correlation(pred_log1p, true_pert_log1p),
+        "sliced_w2":      sliced_wasserstein2(pred_log1p, true_pert_log1p),
     }
 
 
@@ -231,26 +275,29 @@ def evaluate_all_perturbations(
         per_pert[gene] = metrics
 
     # Aggregate means (numeric metrics only).
-    numeric_keys = ["pearson_r", "weighted_cos", "jaccard_top50", "e_distance", "variance_corr"]
+    numeric_keys = ["pearson_r", "weighted_cos", "jaccard_top50", "e_distance", "variance_corr", "sliced_w2"]
     means = {k: float(np.mean([p[k] for p in per_pert.values()])) for k in numeric_keys}
     means["knockdown_ok_rate"] = float(
         np.mean([float(p["knockdown_ok"]) for p in per_pert.values()])
     )
 
-    # Print summary table.
-    header = f"{'Perturbation':<20} {'Pearson r':>10} {'Wtd-cos':>10} {'Jaccard@50':>12} {'E-dist':>10} {'Var-corr':>10} {'KD-ok':>7}"
+    # Print summary table — cell distribution metrics emphasized.
+    header = (
+        f"{'Perturbation':<20} {'Pearson r':>10} {'Wtd-cos':>10} "
+        f"{'E-dist':>10} {'SW2':>10} {'Var-corr':>10} {'KD-ok':>7}"
+    )
     print("\n" + header)
     print("-" * len(header))
     for gene, m in sorted(per_pert.items()):
         print(
             f"{gene:<20} {m['pearson_r']:>10.4f} {m['weighted_cos']:>10.4f} "
-            f"{m['jaccard_top50']:>12.4f} {m['e_distance']:>10.4f} "
+            f"{m['e_distance']:>10.4f} {m['sliced_w2']:>10.4f} "
             f"{m['variance_corr']:>10.4f} {str(m['knockdown_ok']):>7}"
         )
     print("-" * len(header))
     print(
         f"{'MEAN':<20} {means['pearson_r']:>10.4f} {means['weighted_cos']:>10.4f} "
-        f"{means['jaccard_top50']:>12.4f} {means['e_distance']:>10.4f} "
+        f"{means['e_distance']:>10.4f} {means['sliced_w2']:>10.4f} "
         f"{means['variance_corr']:>10.4f} {means['knockdown_ok_rate']:>7.4f}"
     )
 
