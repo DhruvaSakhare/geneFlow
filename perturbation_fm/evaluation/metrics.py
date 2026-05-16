@@ -191,17 +191,12 @@ def evaluate_perturbation(
     model.eval()
     out = model.predict(x0_tensor, esm_tensor)
 
-    # c. Use NB mu (expected counts) for LFC — noise-free mean prediction.
-    mu_np = out["mu"].cpu().float().numpy()
-    totals = mu_np.sum(axis=1, keepdims=True)
-    totals = np.where(totals == 0, 1.0, totals)
-    pred_log1p_mu = np.log1p(mu_np / totals * 10_000.0)  # for LFC
-
-    # ODE endpoint in log1p space for population-level metrics (E-dist, var-corr).
+    # c. ODE endpoint (already includes baseline_lfc added back inside model.predict).
+    # Use directly for both LFC and population metrics — no NB head transformation.
     pred_log1p = out["x1_log1p"].cpu().float().numpy()
 
-    # d. Predicted LFC from mu (noise-free).
-    pred_lfc = pred_log1p_mu.mean(axis=0) - ctrl_mean_log1p
+    # d. Predicted LFC from ODE output.
+    pred_lfc = pred_log1p.mean(axis=0) - ctrl_mean_log1p
 
     # e. True LFC.
     true_lfc = true_pert_log1p.mean(axis=0) - ctrl_mean_log1p
