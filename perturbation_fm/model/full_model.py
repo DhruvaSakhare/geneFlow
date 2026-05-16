@@ -7,7 +7,6 @@ from typing import Dict
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from scipy.optimize import linear_sum_assignment
 
 from perturbation_fm.model.flow_net import FlowNet
 from perturbation_fm.model.nb_head import NBHead, nb_nll
@@ -64,32 +63,26 @@ class PerturbationFlowModel(nn.Module):
         B = x0.shape[0]
         device = x0.device
 
-        # 1. Minibatch optimal transport pairing.
-        # Reorder x0 so each (x0, x1) pair minimises total ||x0 - x1||².
-        # This straightens trajectories and reduces velocity field variance.
-        with torch.no_grad():
-            C = torch.cdist(x0, x1_log1p).cpu().numpy()
-            # Hungarian is O(B³) on CPU; only pay this cost once per batch.
-            _, col_idx = linear_sum_assignment(C)
-            col_idx = torch.from_numpy(col_idx).to(device)
-        x1_log1p  = x1_log1p[col_idx]
-        x1_counts = x1_counts[col_idx]
-        esm_emb   = esm_emb[col_idx]
-
-        # 2. Sample t ~ Uniform(0, 1)
+        # 1. Sample t ~ Uniform(0, 1)
         t = torch.rand(B, 1, device=device)
 
-        # 3. Interpolate
+        # 2. Interpolate
         x_t = (1.0 - t) * x0 + t * x1_log1p
 
-        # 4. True velocity
+        # 3. True velocity
         u_target = x1_log1p - x0
 
-        # 5. Predicted velocity
+        # 4. Predicted velocity
         u_pred = self.flow_net(x_t, t, esm_emb)
 
-        # 6. Flow matching MSE
-        loss_fm = F.mse_loss(u_pred, u_target)
+        # 5. Gene-activity-weighted FM loss.
+        # ~96% of genes are non-DE (near-zero velocity) and drown out the DE
+        # gene signal at a 23:1 ratio with uniform MSE. Weighting by mean |u|
+        # per gene focuses gradients on genes that actually change.
+        with torch.no_grad():
+            weights = u_target.abs().mean(dim=0) + 1e-6   # (n_genes,)
+            weights = weights / weights.mean()             # mean weight = 1
+        loss_fm = (F.mse_loss(u_pred, u_target, reduction="none") * weights).mean()
 
         # 7–8. NB head trained on TRUE x1 (not predicted)
         mu, theta = self.nb_head(x1_log1p)

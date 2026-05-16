@@ -5,13 +5,13 @@ n_genes:    null        # filled automatically after preprocessing
 esm_dim:    480         # ESM-2 35M output dimension
 hidden_dim: 512
 num_layers: 8
-dropout:    0.1
+dropout:    0.2
 lambda_nb:  0.1         # weight on the NB loss term
 
 # Optimisation
 batch_size:   256
 lr:           1.0e-4
-weight_decay: 1.0e-5
+weight_decay: 1.0e-4
 n_epochs:     100
 patience:     30        # early-stopping patience on val FM loss
 grad_clip:    1.0
@@ -27,4 +27,5 @@ seed: 42
 train_path: /work3/s225191/geneFlow/data/training.h5ad
 val_path:   /work3/s225191/geneFlow/data/validation.h5ad
 emb_path:   /work3/s225191/geneFlow/embeddings/esm2_embeddings.pt
+
 save_dir:   /work3/s225191/geneFlow/checkpoints/
