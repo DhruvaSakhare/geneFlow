@@ -258,11 +258,9 @@ def train(cfg: Dict) -> None:
             )
             model.train()
 
-        # ---- Checkpointing — track FM loss only for early stopping ----
-        # NB loss converges in epoch 1-2 and dominates the combined metric,
-        # which would trigger early stopping before the flow network learns.
-        if val_fm < best_val_loss:
-            best_val_loss = val_fm
+        # ---- Checkpointing — track val LFC loss for early stopping ----
+        if val_lfc < best_val_loss:
+            best_val_loss = val_lfc
             patience_counter = 0
             ckpt_path = save_dir / "best_model.pt"
             torch.save(
@@ -270,12 +268,12 @@ def train(cfg: Dict) -> None:
                     "epoch": epoch,
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
-                    "val_fm": val_fm,
+                    "val_lfc": val_lfc,
                     "cfg": cfg,
                 },
                 ckpt_path,
             )
-            print(f"  ✓ Saved best model  (val_fm={best_val_loss:.4f})")
+            print(f"  ✓ Saved best model  (val_lfc={best_val_loss:.4f})")
         else:
             patience_counter += 1
             if patience_counter >= cfg["patience"]:
