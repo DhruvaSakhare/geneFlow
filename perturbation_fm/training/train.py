@@ -22,7 +22,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from perturbation_fm.data.dataset import PerturbationDataset, get_dataloader
 from perturbation_fm.data.preprocess import preprocess
-from perturbation_fm.evaluation.metrics import evaluate_all_perturbations, pearson_lfc
+from perturbation_fm.evaluation.metrics import evaluate_all_perturbations, pearson_lfc, weighted_cosine_lfc
 from perturbation_fm.model.full_model import PerturbationFlowModel
 
 
@@ -71,14 +71,16 @@ def baseline(data_dict: Dict) -> float:
     val_ctrl_mask = data_dict["val_ctrl_mask"]
 
     val_perts = np.unique(val_genes[~val_ctrl_mask])
-    rs = []
+    rs, wcos = [], []
     for pert in val_perts:
         mask = (~val_ctrl_mask) & (val_genes == pert)
         true_lfc = val_log1p[mask].mean(axis=0) - ctrl_mean
         rs.append(pearson_lfc(mean_train_lfc, true_lfc))
+        wcos.append(weighted_cosine_lfc(mean_train_lfc, true_lfc))
 
-    mean_r = float(np.mean(rs))
-    print(f"[Baseline] Mean Pearson r (mean-train-LFC vs val): {mean_r:.4f}")
+    mean_r    = float(np.mean(rs))
+    mean_wcos = float(np.mean(wcos))
+    print(f"[Baseline] Mean Pearson r: {mean_r:.4f}  Weighted cosine: {mean_wcos:.4f}")
     return mean_r
 
 
