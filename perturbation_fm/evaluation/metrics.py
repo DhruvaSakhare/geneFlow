@@ -100,6 +100,35 @@ def variance_correlation(pred_cells: np.ndarray, true_cells: np.ndarray) -> floa
     return float(r)
 
 
+def perturbation_discrimination_score(
+    pred_lfcs: Dict[str, np.ndarray],
+    true_lfcs: Dict[str, np.ndarray],
+) -> float:
+    """Can the model distinguish between perturbations?
+
+    For each true perturbation, rank all predicted LFC vectors by similarity
+    (negative L2 distance). Score = 1 - mean(normalized_rank), where rank 0
+    means the matching prediction was closest. 1.0 = perfect discrimination,
+    0.5 = random.
+    """
+    perts = sorted(set(pred_lfcs.keys()) & set(true_lfcs.keys()))
+    if len(perts) < 2:
+        return float("nan")
+
+    pred_mat = np.stack([pred_lfcs[p] for p in perts])  # (P, n_genes)
+    true_mat = np.stack([true_lfcs[p] for p in perts])  # (P, n_genes)
+
+    # Pairwise L2 distances between each true vector and all predictions.
+    dists = np.linalg.norm(true_mat[:, None, :] - pred_mat[None, :, :], axis=2)
+    # For each row i, where does column i (the matching prediction) rank?
+    ranks = np.argsort(dists, axis=1)
+    normalized_ranks = []
+    for i in range(len(perts)):
+        rank_of_match = int(np.where(ranks[i] == i)[0][0])
+        normalized_ranks.append(rank_of_match / (len(perts) - 1))
+    return float(1.0 - np.mean(normalized_ranks))
+
+
 def sliced_wasserstein2(
     pred_cells: np.ndarray,
     true_cells: np.ndarray,
@@ -209,6 +238,8 @@ def evaluate_perturbation(
         "e_distance":     e_distance(pred_log1p, true_pert_log1p),
         "variance_corr":  variance_correlation(pred_log1p, true_pert_log1p),
         "sliced_w2":      sliced_wasserstein2(pred_log1p, true_pert_log1p),
+        "_pred_lfc":      pred_lfc,
+        "_true_lfc":      true_lfc,
     }
 
 
@@ -276,6 +307,11 @@ def evaluate_all_perturbations(
         np.mean([float(p["knockdown_ok"]) for p in per_pert.values()])
     )
 
+    # Perturbation Discrimination Score (cross-perturbation metric).
+    pred_lfcs = {g: m["_pred_lfc"] for g, m in per_pert.items()}
+    true_lfcs = {g: m["_true_lfc"] for g, m in per_pert.items()}
+    means["pds"] = perturbation_discrimination_score(pred_lfcs, true_lfcs)
+
     # Print summary table — cell distribution metrics emphasized.
     header = (
         f"{'Perturbation':<20} {'Pearson r':>10} {'Wtd-cos':>10} "
@@ -295,5 +331,7 @@ def evaluate_all_perturbations(
         f"{means['e_distance']:>10.4f} {means['sliced_w2']:>10.4f} "
         f"{means['variance_corr']:>10.4f} {means['knockdown_ok_rate']:>7.4f}"
     )
+    print(f"PDS (Perturbation Discrimination Score): {means['pds']:.4f}  "
+          f"[1.0 = perfect, 0.5 = random]")
 
     return {"mean": means, "per_perturbation": per_pert}
