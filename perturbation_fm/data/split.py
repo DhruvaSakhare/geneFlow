@@ -84,8 +84,9 @@ def split_by_perturbation(
     adata_test  = _subset(test_genes)
 
     for name, ad in [("train", adata_train), ("val", adata_val), ("test", adata_test)]:
-        n_ctrl = ad.obs["control"].sum()
-        n_pert = (~ad.obs["control"].astype(bool)).sum()
+        ctrl = ad.obs["target_gene"].values == "non-targeting"
+        n_ctrl = ctrl.sum()
+        n_pert = (~ctrl).sum()
         print(f"  {name:5s}: {n_pert:6d} perturbed cells + {n_ctrl:6d} control cells "
               f"= {len(ad):6d} total")
 
