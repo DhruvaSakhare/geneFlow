@@ -6,7 +6,6 @@ from typing import Dict, List
 
 import numpy as np
 import torch
-from scipy.spatial.distance import cdist
 from scipy.stats import pearsonr
 
 
@@ -45,24 +44,26 @@ def knockdown_consistency(
     return bool(pred_lfc[idx] < 0.0)
 
 
-def e_distance(pred_cells: np.ndarray, true_cells: np.ndarray) -> float:
+def e_distance(pred_cells: np.ndarray, true_cells: np.ndarray, n_sub: int = 200) -> float:
     """Energy distance between two cell populations.
 
     Formula: 2·E[||X−Y||] − E[||X−X'||] − E[||Y−Y'||]
 
-    Subsamples each population to at most 500 cells for speed.
+    Uses torch.cdist on GPU/CPU for speed. Subsamples to n_sub cells each.
     """
     rng = np.random.default_rng(0)
-    n_sub = 500
 
     if len(pred_cells) > n_sub:
         pred_cells = pred_cells[rng.choice(len(pred_cells), n_sub, replace=False)]
     if len(true_cells) > n_sub:
         true_cells = true_cells[rng.choice(len(true_cells), n_sub, replace=False)]
 
-    xy = cdist(pred_cells, true_cells, metric="euclidean").mean()
-    xx = cdist(pred_cells, pred_cells, metric="euclidean").mean()
-    yy = cdist(true_cells, true_cells, metric="euclidean").mean()
+    p = torch.from_numpy(pred_cells).float()
+    t = torch.from_numpy(true_cells).float()
+
+    xy = torch.cdist(p, t).mean().item()
+    xx = torch.cdist(p, p).mean().item()
+    yy = torch.cdist(t, t).mean().item()
 
     return float(2.0 * xy - xx - yy)
 

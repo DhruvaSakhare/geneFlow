@@ -7,6 +7,7 @@ from typing import Dict
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from scipy.optimize import linear_sum_assignment
 
 from perturbation_fm.model.flow_net import FlowNet
 from perturbation_fm.model.nb_head import NBHead, nb_nll
@@ -63,13 +64,33 @@ class PerturbationFlowModel(nn.Module):
         B = x0.shape[0]
         device = x0.device
 
-        # 1. Sample t ~ Uniform(0, 1)
+        # 1. Per-perturbation OT pairing.
+        # Cells with identical esm_emb belong to the same perturbation.
+        # OT within each group straightens trajectories without mixing
+        # control cells across perturbations.
+        with torch.no_grad():
+            _, inverse_idx = torch.unique(esm_emb, dim=0, return_inverse=True)
+            x1_log1p_ot  = x1_log1p.clone()
+            x1_counts_ot = x1_counts.clone()
+            for p_idx in inverse_idx.unique():
+                group = torch.where(inverse_idx == p_idx)[0]
+                if len(group) <= 1:
+                    continue
+                C = torch.cdist(x0[group], x1_log1p[group]).cpu().numpy()
+                _, col = linear_sum_assignment(C)
+                col = torch.tensor(col, device=device)
+                x1_log1p_ot[group]  = x1_log1p[group][col]
+                x1_counts_ot[group] = x1_counts[group][col]
+        x1_log1p  = x1_log1p_ot
+        x1_counts = x1_counts_ot
+
+        # 2. Sample t ~ Uniform(0, 1)
         t = torch.rand(B, 1, device=device)
 
-        # 2. Interpolate
+        # 3. Interpolate
         x_t = (1.0 - t) * x0 + t * x1_log1p
 
-        # 3. True velocity
+        # 4. True velocity
         u_target = x1_log1p - x0
 
         # 4. Predicted velocity

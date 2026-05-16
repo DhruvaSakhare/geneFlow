@@ -133,6 +133,9 @@ def train(cfg: Dict) -> None:
     train_loader = get_dataloader(
         train_dataset, batch_size=cfg["batch_size"], shuffle=True,
         num_workers=4, pin_memory=True,
+        balanced=True,
+        n_perts_per_batch=cfg["n_perts_per_batch"],
+        n_cells_per_pert=cfg["n_cells_per_pert"],
     )
     val_loader = get_dataloader(
         val_dataset, batch_size=cfg["batch_size"], shuffle=False,

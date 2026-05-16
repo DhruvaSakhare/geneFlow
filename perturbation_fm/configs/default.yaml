@@ -9,7 +9,9 @@ dropout:    0.2
 lambda_nb:  0.1         # weight on the NB loss term
 
 # Optimisation
-batch_size:   256
+batch_size:       256
+n_perts_per_batch: 16   # perturbations per batch (for balanced sampler + per-pert OT)
+n_cells_per_pert:  16   # cells per perturbation  (16 × 16 = 256 total)
 lr:           1.0e-4
 weight_decay: 1.0e-4
 n_epochs:     100
