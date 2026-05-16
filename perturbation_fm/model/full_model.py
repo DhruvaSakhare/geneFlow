@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from typing import Dict
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from scipy.optimize import linear_sum_assignment
 
 from perturbation_fm.model.flow_net import FlowNet
 from perturbation_fm.model.nb_head import NBHead, nb_nll
@@ -63,26 +65,39 @@ class PerturbationFlowModel(nn.Module):
         B = x0.shape[0]
         device = x0.device
 
-        # 1. Sample t ~ Uniform(0, 1)
+        # 1. Minibatch optimal transport pairing.
+        # Reorder x0 so each (x0, x1) pair minimises total ||x0 - x1||².
+        # This straightens trajectories and reduces velocity field variance.
+        with torch.no_grad():
+            C = torch.cdist(x0, x1_log1p).cpu().numpy()          # (B, B)
+            row_idx, col_idx = linear_sum_assignment(C)
+            row_idx = torch.from_numpy(row_idx).to(device)
+            col_idx = torch.from_numpy(col_idx).to(device)
+        x0        = x0[row_idx]
+        x1_log1p  = x1_log1p[col_idx]
+        x1_counts = x1_counts[col_idx]
+        esm_emb   = esm_emb[col_idx]
+
+        # 2. Sample t ~ Uniform(0, 1)
         t = torch.rand(B, 1, device=device)
 
-        # 2. Interpolate
+        # 3. Interpolate
         x_t = (1.0 - t) * x0 + t * x1_log1p
 
-        # 3. True velocity
+        # 4. True velocity
         u_target = x1_log1p - x0
 
-        # 4. Predicted velocity
+        # 5. Predicted velocity
         u_pred = self.flow_net(x_t, t, esm_emb)
 
-        # 5. Flow matching MSE
+        # 6. Flow matching MSE
         loss_fm = F.mse_loss(u_pred, u_target)
 
-        # 6–7. NB head trained on TRUE x1 (not predicted)
+        # 7–8. NB head trained on TRUE x1 (not predicted)
         mu, theta = self.nb_head(x1_log1p)
         loss_nb = nb_nll(x1_counts, mu, theta)
 
-        # 8. Combined loss
+        # 9. Combined loss
         loss = loss_fm + self.lambda_nb * loss_nb
 
         return {
