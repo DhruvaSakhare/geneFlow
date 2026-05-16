@@ -2,7 +2,7 @@
 
 # Model architecture
 n_genes:    null        # filled automatically after preprocessing
-esm_dim:    480         # ESM-2 35M output dimension
+esm_dim:    3072        # GenePT (GPT-4) embedding dimension
 hidden_dim: 512
 num_layers: 8
 dropout:    0.2
@@ -28,6 +28,6 @@ seed: 42
 # Paths (relative to repo root: geneFlow/)
 train_path: /work3/s225191/geneFlow/data/training.h5ad
 val_path:   /work3/s225191/geneFlow/data/validation.h5ad
-emb_path:   /work3/s225191/geneFlow/embeddings/esm2_embeddings.pt
+emb_path:   /work3/s225191/geneFlow/embeddings/genept_embeddings.pt
 
 save_dir:   /work3/s225191/geneFlow/checkpoints/
