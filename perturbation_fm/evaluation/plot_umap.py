@@ -54,10 +54,12 @@ def integrate_trajectory(
     if esm_emb.dim() == 1:
         esm_emb = esm_emb.unsqueeze(0).expand(B, -1)
 
-    save_every = max(1, n_steps // n_save)
     x = x0.clone().float()
     dt = 1.0 / n_steps
 
+    # Choose which integration steps to save (after step idx, save the state).
+    # Always include the final step. Result is n_save + 1 saved states.
+    save_steps = set(np.linspace(1, n_steps, n_save, dtype=int).tolist())
     saved = [x.clone() + model.baseline_lfc]
 
     def v(x_, t_val):
@@ -71,10 +73,10 @@ def integrate_trajectory(
         k3 = v(x + k2 * (dt / 2),  t_i + dt / 2)
         k4 = v(x + k3 * dt,         t_i + dt)
         x = x + (k1 + 2.0 * k2 + 2.0 * k3 + k4) * (dt / 6.0)
-        if (i + 1) % save_every == 0 or i == n_steps - 1:
+        if (i + 1) in save_steps:
             saved.append(x.clone() + model.baseline_lfc)
 
-    return torch.stack(saved, dim=0)  # (T, B, n_genes)
+    return torch.stack(saved, dim=0)  # (n_save + 1, B, n_genes)
 
 
 def main() -> None:
