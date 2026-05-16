@@ -40,6 +40,10 @@ class PerturbationFlowModel(nn.Module):
         self.lambda_lfc = lambda_lfc
         self.flow_net = FlowNet(n_genes, esm_dim, hidden_dim, num_layers, dropout)
         self.nb_head = NBHead(n_genes)
+        self.register_buffer("baseline_lfc", torch.zeros(n_genes))
+
+    def set_baseline_lfc(self, baseline_lfc: torch.Tensor) -> None:
+        self.baseline_lfc.copy_(baseline_lfc.float())
 
     # ------------------------------------------------------------------
     # Training
@@ -65,6 +69,9 @@ class PerturbationFlowModel(nn.Module):
         """
         B = x0.shape[0]
         device = x0.device
+
+        # 0. Subtract baseline so model learns the perturbation-specific residual.
+        x1_log1p = x1_log1p - self.baseline_lfc
 
         # 1. Per-perturbation OT pairing.
         # Cells with identical esm_emb belong to the same perturbation.
@@ -178,7 +185,7 @@ class PerturbationFlowModel(nn.Module):
             k4 = v(x + k3 * dt,         t_i + dt)
             x = x + (k1 + 2.0 * k2 + 2.0 * k3 + k4) * (dt / 6.0)
 
-        x1_hat = x
+        x1_hat = x + self.baseline_lfc
         mu, theta = self.nb_head(x1_hat)
 
         nb_dist = torch.distributions.NegativeBinomial(

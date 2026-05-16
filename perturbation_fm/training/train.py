@@ -165,6 +165,18 @@ def train(cfg: Dict) -> None:
         lambda_lfc=cfg["lambda_lfc"],
     ).to(device)
 
+    train_log1p_full = data_dict["train_log1p"]
+    train_genes_arr = np.asarray(data_dict["train_genes"])
+    train_ctrl_mask = data_dict["train_ctrl_mask"]
+    ctrl_mean_train = data_dict["ctrl_mean_log1p"]
+    train_perts_unique = np.unique(train_genes_arr[~train_ctrl_mask])
+    _train_lfcs = []
+    for _pert in train_perts_unique:
+        _mask = (~train_ctrl_mask) & (train_genes_arr == _pert)
+        _train_lfcs.append(train_log1p_full[_mask].mean(axis=0) - ctrl_mean_train)
+    baseline_lfc_vec = np.mean(_train_lfcs, axis=0)
+    model.set_baseline_lfc(torch.from_numpy(baseline_lfc_vec).to(device))
+    print(f"Baseline LFC computed: mean |LFC| = {np.abs(baseline_lfc_vec).mean():.4f}")
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"\nModel parameters: {n_params:,}")
@@ -182,8 +194,7 @@ def train(cfg: Dict) -> None:
     # ------------------------------------------------------------------
     # Training loop
     # ------------------------------------------------------------------
-    best_val_loss = float("inf")
-    patience_counter = 0
+    best_val_pearson = -float("inf")
     loss_history: Dict[str, list] = {"train_fm": [], "train_lfc": [], "val_fm": [], "val_lfc": []}
 
     print("\n=== Training ===")
@@ -242,41 +253,46 @@ def train(cfg: Dict) -> None:
         loss_history["val_fm"].append(val_fm)
         loss_history["val_lfc"].append(val_lfc)
 
-        # ---- Full perturbation eval every 5 epochs ----
+        # ---- Full perturbation eval every 5 epochs + checkpoint on Pearson r ----
         if epoch % 5 == 0:
             print(f"\n--- Perturbation eval (epoch {epoch}) ---")
             agg = evaluate_all_perturbations(
                 model, data_dict, gene_emb_map, device=str(device)
             )
             m = agg["mean"]
+            val_pearson = m["pearson_r"]
+            val_pds = m["pds"]
+            # Combined score: Pearson r + (PDS - 0.5) puts both on similar scale
+            val_score = val_pearson + (val_pds - 0.5)
             print(
-                f"  mean Pearson r: {m['pearson_r']:.4f}  "
+                f"  mean Pearson r: {val_pearson:.4f}  "
+                f"PDS: {val_pds:.4f}  score: {val_score:.4f}  "
                 f"mean E-dist: {m['e_distance']:.4f}\n"
             )
+            if val_score > best_val_pearson:
+                best_val_pearson = val_score
+                ckpt_path = save_dir / "best_model.pt"
+                torch.save(
+                    {
+                        "epoch": epoch,
+                        "model_state_dict": model.state_dict(),
+                        "optimizer_state_dict": optimizer.state_dict(),
+                        "val_pearson": val_pearson,
+                        "val_pds": val_pds,
+                        "val_score": val_score,
+                        "cfg": cfg,
+                    },
+                    ckpt_path,
+                )
+                print(f"  ✓ Saved best model  (score={best_val_pearson:.4f})")
             model.train()
-
-        # ---- Checkpointing — save best by val LFC, no early stopping ----
-        if val_lfc < best_val_loss:
-            best_val_loss = val_lfc
-            ckpt_path = save_dir / "best_model.pt"
-            torch.save(
-                {
-                    "epoch": epoch,
-                    "model_state_dict": model.state_dict(),
-                    "optimizer_state_dict": optimizer.state_dict(),
-                    "val_lfc": val_lfc,
-                    "cfg": cfg,
-                },
-                ckpt_path,
-            )
-            print(f"  ✓ Saved best model  (val_lfc={best_val_loss:.4f})")
 
     # Save loss history.
     with open(save_dir / "loss_history.json", "w") as f:
         json.dump(loss_history, f, indent=2)
     with open(save_dir / "config.json", "w") as f:
         json.dump(cfg, f, indent=2)
-    print(f"\nTraining complete. Best val loss: {best_val_loss:.4f}")
+    print(f"\nTraining complete. Best val score (Pearson r + PDS - 0.5): {best_val_pearson:.4f}")
 
 
 # ---------------------------------------------------------------------------
