@@ -4,7 +4,7 @@ Plots all 15 val perturbations: control cells (grey dots), true perturbed
 cells (colored dots), model-predicted trajectories (colored lines with
 start/end diamonds). Background scatter via scprep.
 
-Requires: pip install umap-learn scikit-learn scprep
+Requires: pip install umap-learn scikit-learn
 
 Usage:
     python -m perturbation_fm.evaluation.plot_umap \
@@ -24,7 +24,6 @@ import yaml
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import scprep
 from sklearn.decomposition import PCA
 from umap import UMAP
 
@@ -202,25 +201,34 @@ def main() -> None:
     pert_colors = plt.cm.tab20(np.linspace(0, 1, len(perts)))
     color_map = {p: pert_colors[i] for i, p in enumerate(perts)}
     color_map["control"] = (0.75, 0.75, 0.75, 1.0)
-    cmap_list = [color_map[lab] for lab in ["control"] + perts]
 
     fig, ax = plt.subplots(figsize=(13, 10))
 
-    scprep.plot.scatter2d(
-        bg_xy,
-        c=bg_labels,
-        cmap=cmap_list,
-        s=8,
-        alpha=0.6,
-        ax=ax,
-        legend_title="Perturbation",
-        legend_anchor=(1.02, 1.0),
-        legend_loc="upper left",
-        ticks=False,
-        label_prefix=None,
-        xlabel="UMAP 1",
-        ylabel="UMAP 2",
+    # Categorical scatter (control first so perturbed dots draw on top)
+    legend_handles = []
+    for label in ["control"] + perts:
+        mask = bg_labels == label
+        if not mask.any():
+            continue
+        color = color_map[label]
+        ax.scatter(
+            bg_xy[mask, 0], bg_xy[mask, 1],
+            c=[color], s=8, alpha=0.6,
+            linewidths=0, zorder=2 if label == "control" else 2.5,
+        )
+        legend_handles.append(
+            plt.scatter([], [], c=[color], s=30, label=label)
+        )
+    bg_legend = ax.legend(
+        handles=legend_handles, title="Perturbation",
+        loc="upper left", bbox_to_anchor=(1.02, 1.0),
+        fontsize=8, frameon=True,
     )
+    ax.add_artist(bg_legend)
+    ax.set_xlabel("UMAP 1")
+    ax.set_ylabel("UMAP 2")
+    ax.set_xticks([])
+    ax.set_yticks([])
 
     # Overlay trajectories
     for pert in perts:
