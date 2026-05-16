@@ -24,7 +24,7 @@ ode_steps:         50     # RK4 integration steps
 seed: 42
 
 # Paths (relative to repo root: geneFlow/)
-train_path: data/training.h5ad
-val_path:   data/validation.h5ad
-emb_path:   embeddings/esm2_embeddings.pt
-save_dir:   checkpoints/
+train_path: /work3/s225191/geneFlow/data/training.h5ad
+val_path:   /work3/s225191/geneFlow/data/validation.h5ad
+emb_path:   /work3/s225191/geneFlow/embeddings/esm2_embeddings.pt
+save_dir:   /work3/s225191/geneFlow/checkpoints/
