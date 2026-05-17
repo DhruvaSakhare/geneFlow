@@ -6,7 +6,7 @@ from typing import Dict, List
 
 import numpy as np
 import torch
-from scipy.stats import pearsonr
+from scipy.stats import pearsonr, mannwhitneyu
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +129,117 @@ def perturbation_discrimination_score(
     return float(1.0 - np.mean(normalized_ranks))
 
 
+# ---------------------------------------------------------------------------
+# Virtual Cell Challenge metrics (DES, PDS, MAE)
+# ---------------------------------------------------------------------------
+
+def _bh_significant(pvals: np.ndarray, alpha: float = 0.05) -> np.ndarray:
+    """Benjamini-Hochberg: return boolean mask of significant tests at FDR alpha."""
+    n = len(pvals)
+    order = np.argsort(pvals)
+    ranked = pvals[order]
+    thresholds = alpha * np.arange(1, n + 1) / n
+    passing = ranked <= thresholds
+    if not passing.any():
+        return np.zeros(n, dtype=bool)
+    cutoff = np.max(np.where(passing)[0])
+    sig_order = order[: cutoff + 1]
+    out = np.zeros(n, dtype=bool)
+    out[sig_order] = True
+    return out
+
+
+def _wilcoxon_de(perturbed: np.ndarray, control: np.ndarray) -> np.ndarray:
+    """Per-gene Mann-Whitney U p-values for perturbed vs control."""
+    n_genes = perturbed.shape[1]
+    pvals = np.ones(n_genes, dtype=float)
+    for g in range(n_genes):
+        a, b = perturbed[:, g], control[:, g]
+        if a.std() < 1e-12 and b.std() < 1e-12:
+            continue
+        try:
+            _, p = mannwhitneyu(a, b, alternative="two-sided", method="asymptotic")
+            pvals[g] = p
+        except ValueError:
+            continue
+    return pvals
+
+
+def diff_expression_score(
+    pred_perturbed: np.ndarray,
+    pred_control:   np.ndarray,
+    true_perturbed: np.ndarray,
+    true_control:   np.ndarray,
+    pred_lfc:       np.ndarray,
+    alpha: float = 0.05,
+) -> float:
+    """VCC Differential Expression Score for one perturbation.
+
+    1. Wilcoxon (perturbed vs control) → p-values, both pred and true.
+    2. BH FDR < alpha → DE gene sets G_pred, G_true.
+    3. If |G_pred| > |G_true|, truncate G_pred to top-|G_true| by |pred_lfc|.
+    4. DES = |G_pred ∩ G_true| / |G_true|.
+    """
+    pred_pvals = _wilcoxon_de(pred_perturbed, pred_control)
+    true_pvals = _wilcoxon_de(true_perturbed, true_control)
+
+    pred_sig = np.where(_bh_significant(pred_pvals, alpha))[0]
+    true_sig = np.where(_bh_significant(true_pvals, alpha))[0]
+
+    if len(true_sig) == 0:
+        return float("nan")
+
+    if len(pred_sig) > len(true_sig):
+        # Keep only the top-N predicted by |LFC|
+        order = np.argsort(-np.abs(pred_lfc[pred_sig]))
+        pred_sig = pred_sig[order[: len(true_sig)]]
+
+    inter = len(set(pred_sig.tolist()) & set(true_sig.tolist()))
+    return inter / len(true_sig)
+
+
+def mae_pseudobulk(
+    pred_perturbed: np.ndarray,
+    true_perturbed: np.ndarray,
+) -> float:
+    """VCC MAE — mean |pseudobulk_pred - pseudobulk_true| over all genes."""
+    pred_pb = pred_perturbed.mean(axis=0)
+    true_pb = true_perturbed.mean(axis=0)
+    return float(np.mean(np.abs(pred_pb - true_pb)))
+
+
+def vcc_perturbation_discrimination_score(
+    pred_lfcs: Dict[str, np.ndarray],
+    true_lfcs: Dict[str, np.ndarray],
+    gene_names: List[str],
+) -> float:
+    """VCC PDS — L1 distance, target gene excluded, formula 1 - (rank - 1) / N."""
+    perts = sorted(set(pred_lfcs.keys()) & set(true_lfcs.keys()))
+    N = len(perts)
+    if N < 2:
+        return float("nan")
+
+    pred_mat = np.stack([pred_lfcs[p] for p in perts])
+    true_mat = np.stack([true_lfcs[p] for p in perts])
+
+    name_to_idx = {g: i for i, g in enumerate(gene_names)}
+
+    scores = []
+    for p_idx, p in enumerate(perts):
+        tgt = name_to_idx.get(p, -1)
+        if tgt >= 0:
+            cols = np.r_[0:tgt, tgt + 1:pred_mat.shape[1]]
+        else:
+            cols = np.arange(pred_mat.shape[1])
+        pred_vec = pred_mat[p_idx, cols]
+        true_sub = true_mat[:, cols]
+        dists = np.abs(true_sub - pred_vec[None, :]).sum(axis=1)
+        order = np.argsort(dists, kind="stable")
+        rank_1 = int(np.where(order == p_idx)[0][0]) + 1
+        scores.append(1.0 - (rank_1 - 1) / N)
+    return float(np.mean(scores))
+
+
 def sliced_wasserstein2(
     pred_cells: np.ndarray,
     true_cells: np.ndarray,
@@ -230,6 +341,16 @@ def evaluate_perturbation(
     # e. True LFC.
     true_lfc = true_pert_log1p.mean(axis=0) - ctrl_mean_log1p
 
+    # f. VCC metrics — DES (needs both pred and true control), MAE.
+    des = diff_expression_score(
+        pred_perturbed=pred_log1p,
+        pred_control=ctrl_sample,
+        true_perturbed=true_pert_log1p,
+        true_control=control_log1p,
+        pred_lfc=pred_lfc,
+    )
+    mae = mae_pseudobulk(pred_log1p, true_pert_log1p)
+
     return {
         "pearson_r":      pearson_lfc(pred_lfc, true_lfc),
         "weighted_cos":   weighted_cosine_lfc(pred_lfc, true_lfc),
@@ -238,6 +359,8 @@ def evaluate_perturbation(
         "e_distance":     e_distance(pred_log1p, true_pert_log1p),
         "variance_corr":  variance_correlation(pred_log1p, true_pert_log1p),
         "sliced_w2":      sliced_wasserstein2(pred_log1p, true_pert_log1p),
+        "des":            des,
+        "mae":            mae,
         "_pred_lfc":      pred_lfc,
         "_true_lfc":      true_lfc,
     }
@@ -301,37 +424,46 @@ def evaluate_all_perturbations(
         per_pert[gene] = metrics
 
     # Aggregate means (numeric metrics only).
-    numeric_keys = ["pearson_r", "weighted_cos", "jaccard_top50", "e_distance", "variance_corr", "sliced_w2"]
-    means = {k: float(np.mean([p[k] for p in per_pert.values()])) for k in numeric_keys}
+    numeric_keys = ["pearson_r", "weighted_cos", "jaccard_top50",
+                    "e_distance", "variance_corr", "sliced_w2", "des", "mae"]
+    means = {
+        k: float(np.nanmean([p[k] for p in per_pert.values()]))
+        for k in numeric_keys
+    }
     means["knockdown_ok_rate"] = float(
         np.mean([float(p["knockdown_ok"]) for p in per_pert.values()])
     )
 
-    # Perturbation Discrimination Score (cross-perturbation metric).
+    # Cross-perturbation metrics.
     pred_lfcs = {g: m["_pred_lfc"] for g, m in per_pert.items()}
     true_lfcs = {g: m["_true_lfc"] for g, m in per_pert.items()}
     means["pds"] = perturbation_discrimination_score(pred_lfcs, true_lfcs)
+    means["pds_vcc"] = vcc_perturbation_discrimination_score(
+        pred_lfcs, true_lfcs, gene_names_list,
+    )
 
-    # Print summary table — cell distribution metrics emphasized.
+    # Print summary table — cell distribution metrics + VCC.
     header = (
         f"{'Perturbation':<20} {'Pearson r':>10} {'Wtd-cos':>10} "
-        f"{'E-dist':>10} {'SW2':>10} {'Var-corr':>10} {'KD-ok':>7}"
+        f"{'E-dist':>10} {'DES':>8} {'MAE':>8} {'KD-ok':>7}"
     )
     print("\n" + header)
     print("-" * len(header))
     for gene, m in sorted(per_pert.items()):
         print(
             f"{gene:<20} {m['pearson_r']:>10.4f} {m['weighted_cos']:>10.4f} "
-            f"{m['e_distance']:>10.4f} {m['sliced_w2']:>10.4f} "
-            f"{m['variance_corr']:>10.4f} {str(m['knockdown_ok']):>7}"
+            f"{m['e_distance']:>10.4f} {m['des']:>8.4f} {m['mae']:>8.4f} "
+            f"{str(m['knockdown_ok']):>7}"
         )
     print("-" * len(header))
     print(
         f"{'MEAN':<20} {means['pearson_r']:>10.4f} {means['weighted_cos']:>10.4f} "
-        f"{means['e_distance']:>10.4f} {means['sliced_w2']:>10.4f} "
-        f"{means['variance_corr']:>10.4f} {means['knockdown_ok_rate']:>7.4f}"
+        f"{means['e_distance']:>10.4f} {means['des']:>8.4f} {means['mae']:>8.4f} "
+        f"{means['knockdown_ok_rate']:>7.4f}"
     )
-    print(f"PDS (Perturbation Discrimination Score): {means['pds']:.4f}  "
-          f"[1.0 = perfect, 0.5 = random]")
+    print(f"PDS (ours, L2):  {means['pds']:.4f}      "
+          f"PDS (VCC, L1):  {means['pds_vcc']:.4f}  [1.0 = perfect]")
+    print(f"DES (VCC):       {means['des']:.4f}      "
+          f"MAE (VCC):      {means['mae']:.4f}")
 
     return {"mean": means, "per_perturbation": per_pert}
