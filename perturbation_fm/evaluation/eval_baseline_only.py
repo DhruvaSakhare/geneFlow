@@ -30,13 +30,17 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="perturbation_fm/configs/default.yaml")
     parser.add_argument("--ckpt",   required=True)
+    parser.add_argument("--val_path", default=None,
+                        help="Override val_path from config (e.g. point at test.h5ad)")
     args = parser.parse_args()
 
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    data_dict = preprocess(cfg["train_path"], cfg["val_path"])
+    eval_path = args.val_path or cfg["val_path"]
+    print(f"Evaluating baseline against: {eval_path}")
+    data_dict = preprocess(cfg["train_path"], eval_path)
 
     # Build model and load checkpoint just to get baseline_lfc
     model = PerturbationFlowModel(
