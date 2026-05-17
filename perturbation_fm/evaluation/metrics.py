@@ -298,6 +298,7 @@ def evaluate_perturbation(
     gene_names_list: List[str],
     n_sample: int = 1000,
     device: str = "cpu",
+    compute_des: bool = True,
 ) -> Dict:
     """Full evaluation pipeline for one perturbation.
 
@@ -341,14 +342,17 @@ def evaluate_perturbation(
     # e. True LFC.
     true_lfc = true_pert_log1p.mean(axis=0) - ctrl_mean_log1p
 
-    # f. VCC metrics — DES (needs both pred and true control), MAE.
-    des = diff_expression_score(
-        pred_perturbed=pred_log1p,
-        pred_control=ctrl_sample,
-        true_perturbed=true_pert_log1p,
-        true_control=control_log1p,
-        pred_lfc=pred_lfc,
-    )
+    # f. VCC metrics — DES (slow, Wilcoxon per gene), MAE (cheap).
+    if compute_des:
+        des = diff_expression_score(
+            pred_perturbed=pred_log1p,
+            pred_control=ctrl_sample,
+            true_perturbed=true_pert_log1p,
+            true_control=control_log1p,
+            pred_lfc=pred_lfc,
+        )
+    else:
+        des = float("nan")
     mae = mae_pseudobulk(pred_log1p, true_pert_log1p)
 
     return {
@@ -375,6 +379,7 @@ def evaluate_all_perturbations(
     data_dict: Dict,
     gene_emb_map: Dict[str, torch.Tensor],
     device: str = "cpu",
+    compute_des: bool = True,
 ) -> Dict:
     """Evaluate all validation perturbations and return aggregated results.
 
@@ -420,6 +425,7 @@ def evaluate_all_perturbations(
             gene_name=gene,
             gene_names_list=gene_names_list,
             device=device,
+            compute_des=compute_des,
         )
         per_pert[gene] = metrics
 

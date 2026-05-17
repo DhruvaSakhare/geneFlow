@@ -257,7 +257,8 @@ def train(cfg: Dict) -> None:
         if epoch % 5 == 0:
             print(f"\n--- Perturbation eval (epoch {epoch}) ---")
             agg = evaluate_all_perturbations(
-                model, data_dict, gene_emb_map, device=str(device)
+                model, data_dict, gene_emb_map, device=str(device),
+                compute_des=False,
             )
             m = agg["mean"]
             val_pearson = m["pearson_r"]
