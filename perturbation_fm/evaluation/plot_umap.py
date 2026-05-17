@@ -246,17 +246,9 @@ def main() -> None:
             c=[color], s=55, marker="D",
             edgecolors="black", linewidths=0.4, zorder=4,
         )
-    # Start diamonds (shared, brown) — drawn once
-    start_xy = slices[f"{perts[0]}__traj"].reshape(args.n_save + 1, args.n_traj, 2)[0]
-    ax.scatter(
-        start_xy[:, 0], start_xy[:, 1],
-        c="brown", s=70, marker="D",
-        edgecolors="black", linewidths=0.5, zorder=5,
-    )
-
     ax.set_title(
         "Predicted cell-state trajectories under CRISPRi perturbation\n"
-        "(brown ◆ = start, colored ◆ = predicted endpoint, lines = ODE path)"
+        "(grey ● = control / ODE start, colored ◆ = predicted endpoint, lines = ODE path)"
     )
     ax.spines[["top", "right"]].set_visible(False)
 
