@@ -109,9 +109,9 @@ def main() -> None:
     parser.add_argument("--test_path",   required=True)
     parser.add_argument("--out_traj",    default="umap_trajectory_test.png")
     parser.add_argument("--out_compare", default="umap_compare_test.png")
-    parser.add_argument("--n_seeds",     type=int, default=100,
+    parser.add_argument("--n_seeds",     type=int, default=500,
                         help="Control cells used as ODE seeds per perturbation")
-    parser.add_argument("--n_true",      type=int, default=100,
+    parser.add_argument("--n_true",      type=int, default=500,
                         help="True perturbed cells sampled per perturbation for comparison")
     parser.add_argument("--ode_steps",   type=int, default=50)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")

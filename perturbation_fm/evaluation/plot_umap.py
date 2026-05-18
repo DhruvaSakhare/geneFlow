@@ -80,7 +80,7 @@ def main() -> None:
     parser.add_argument("--config", default="perturbation_fm/configs/default.yaml")
     parser.add_argument("--ckpt",   required=True)
     parser.add_argument("--out",    default="umap_time.png")
-    parser.add_argument("--n_seeds", type=int, default=100,
+    parser.add_argument("--n_seeds", type=int, default=500,
                         help="Control cells used as ODE seeds per perturbation")
     parser.add_argument("--ode_steps", type=int, default=50)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
