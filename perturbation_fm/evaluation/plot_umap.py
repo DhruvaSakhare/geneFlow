@@ -56,7 +56,7 @@ def integrate_at_times(
     dt = 1.0 / n_steps
     saved: dict[float, torch.Tensor] = {}
     if 0 in save_at:
-        saved[save_at[0]] = x.clone() + model.baseline_lfc
+        saved[save_at[0]] = x.clone()
 
     def v(x_, t_val):
         t_tensor = torch.full((B, 1), t_val, device=device, dtype=torch.float32)
@@ -70,7 +70,7 @@ def integrate_at_times(
         k4 = v(x + k3 * dt,         t_i + dt)
         x = x + (k1 + 2.0 * k2 + 2.0 * k3 + k4) * (dt / 6.0)
         if (i + 1) in save_at:
-            saved[save_at[i + 1]] = x.clone() + model.baseline_lfc
+            saved[save_at[i + 1]] = x.clone()
 
     return saved
 
@@ -103,7 +103,7 @@ def main() -> None:
     ).to(device)
 
     ckpt = torch.load(args.ckpt, map_location=device)
-    model.load_state_dict(ckpt["model_state_dict"])
+    model.load_state_dict(ckpt["model_state_dict"], strict=False)
     model.eval()
 
     # Restore baseline_lfc
