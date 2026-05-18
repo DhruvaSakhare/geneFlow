@@ -6,7 +6,6 @@ esm_dim:    480         # ESM-2 35M output dimension
 hidden_dim: 512
 num_layers: 8
 dropout:    0.2
-lambda_nb:  0.0         # weight on the NB loss term (disabled — eval uses ODE output directly)
 lambda_lfc: 0.3         # weight on the per-perturbation mean-LFC loss
 
 # Optimisation

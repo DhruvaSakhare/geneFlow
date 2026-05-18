@@ -60,7 +60,7 @@ def main() -> None:
     ).to(device)
 
     ckpt = torch.load(args.ckpt, map_location=device)
-    model.load_state_dict(ckpt["model_state_dict"])
+    model.load_state_dict(ckpt["model_state_dict"], strict=False)
     model.eval()
     print(f"Loaded checkpoint from epoch {ckpt['epoch']} (val_lfc={ckpt['val_lfc']:.4f})")
 

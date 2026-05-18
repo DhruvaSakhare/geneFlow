@@ -51,9 +51,6 @@ class PerturbationFlowModel(nn.Module):
         B = x0.shape[0]
         device = x0.device
 
-        # Subtract baseline so model learns the perturbation-specific residual.
-        x1_log1p = x1_log1p - self.baseline_lfc
-
         # Per-perturbation OT pairing within each batch.
         with torch.no_grad():
             _, inverse_idx = torch.unique(esm_emb, dim=0, return_inverse=True)
@@ -135,5 +132,4 @@ class PerturbationFlowModel(nn.Module):
             k4 = v(x + k3 * dt,        t_i + dt)
             x = x + (k1 + 2.0 * k2 + 2.0 * k3 + k4) * (dt / 6.0)
 
-        x1_hat = x + self.baseline_lfc
-        return {"x1_log1p": x1_hat}
+        return {"x1_log1p": x}

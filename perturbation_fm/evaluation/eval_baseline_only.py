@@ -49,7 +49,7 @@ def main() -> None:
         lambda_lfc=cfg["lambda_lfc"],
     ).to(device)
     ckpt = torch.load(args.ckpt, map_location=device)
-    model.load_state_dict(ckpt["model_state_dict"])
+    model.load_state_dict(ckpt["model_state_dict"], strict=False)
     baseline_lfc = model.baseline_lfc.cpu().numpy()
 
     # Evaluate "predicting just baseline_lfc" on val perturbations
