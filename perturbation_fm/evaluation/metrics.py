@@ -100,35 +100,6 @@ def variance_correlation(pred_cells: np.ndarray, true_cells: np.ndarray) -> floa
     return float(r)
 
 
-def perturbation_discrimination_score(
-    pred_lfcs: Dict[str, np.ndarray],
-    true_lfcs: Dict[str, np.ndarray],
-) -> float:
-    """Can the model distinguish between perturbations?
-
-    For each true perturbation, rank all predicted LFC vectors by similarity
-    (negative L2 distance). Score = 1 - mean(normalized_rank), where rank 0
-    means the matching prediction was closest. 1.0 = perfect discrimination,
-    0.5 = random.
-    """
-    perts = sorted(set(pred_lfcs.keys()) & set(true_lfcs.keys()))
-    if len(perts) < 2:
-        return float("nan")
-
-    pred_mat = np.stack([pred_lfcs[p] for p in perts])  # (P, n_genes)
-    true_mat = np.stack([true_lfcs[p] for p in perts])  # (P, n_genes)
-
-    # Pairwise L2 distances between each true vector and all predictions.
-    dists = np.linalg.norm(true_mat[:, None, :] - pred_mat[None, :, :], axis=2)
-    # For each row i, where does column i (the matching prediction) rank?
-    ranks = np.argsort(dists, axis=1)
-    normalized_ranks = []
-    for i in range(len(perts)):
-        rank_of_match = int(np.where(ranks[i] == i)[0][0])
-        normalized_ranks.append(rank_of_match / (len(perts) - 1))
-    return float(1.0 - np.mean(normalized_ranks))
-
-
 # ---------------------------------------------------------------------------
 # Virtual Cell Challenge metrics (DES, PDS, MAE)
 # ---------------------------------------------------------------------------
@@ -443,7 +414,6 @@ def evaluate_all_perturbations(
     # Cross-perturbation metrics.
     pred_lfcs = {g: m["_pred_lfc"] for g, m in per_pert.items()}
     true_lfcs = {g: m["_true_lfc"] for g, m in per_pert.items()}
-    means["pds"] = perturbation_discrimination_score(pred_lfcs, true_lfcs)
     means["pds_vcc"] = vcc_perturbation_discrimination_score(
         pred_lfcs, true_lfcs, gene_names_list,
     )
@@ -467,9 +437,8 @@ def evaluate_all_perturbations(
         f"{means['e_distance']:>10.4f} {means['des']:>8.4f} {means['mae']:>8.4f} "
         f"{means['knockdown_ok_rate']:>7.4f}"
     )
-    print(f"PDS (ours, L2):  {means['pds']:.4f}      "
-          f"PDS (VCC, L1):  {means['pds_vcc']:.4f}  [1.0 = perfect]")
-    print(f"DES (VCC):       {means['des']:.4f}      "
-          f"MAE (VCC):      {means['mae']:.4f}")
+    print(f"PDS (VCC):       {means['pds_vcc']:.4f}  [1.0 = perfect]")
+    print(f"DES (VCC):       {means['des']:.4f}")
+    print(f"MAE (VCC):       {means['mae']:.4f}")
 
     return {"mean": means, "per_perturbation": per_pert}

@@ -119,14 +119,12 @@ def train(cfg: Dict) -> None:
     # ------------------------------------------------------------------
     train_dataset = PerturbationDataset(
         log1p_data=data_dict["train_log1p"],
-        counts_data=data_dict["train_counts"],
         gene_targets=data_dict["train_genes"],
         ctrl_mask=data_dict["train_ctrl_mask"],
         gene_emb_map=gene_emb_map,
     )
     val_dataset = PerturbationDataset(
         log1p_data=data_dict["val_log1p"],
-        counts_data=data_dict["val_counts"],
         gene_targets=data_dict["val_genes"],
         ctrl_mask=data_dict["val_ctrl_mask"],
         gene_emb_map=gene_emb_map,
@@ -161,7 +159,6 @@ def train(cfg: Dict) -> None:
         hidden_dim=cfg["hidden_dim"],
         num_layers=cfg["num_layers"],
         dropout=cfg["dropout"],
-        lambda_nb=cfg["lambda_nb"],
         lambda_lfc=cfg["lambda_lfc"],
     ).to(device)
 
@@ -194,7 +191,7 @@ def train(cfg: Dict) -> None:
     # ------------------------------------------------------------------
     # Training loop
     # ------------------------------------------------------------------
-    best_val_pearson = -float("inf")
+    best_val_score = -float("inf")
     loss_history: Dict[str, list] = {"train_fm": [], "train_lfc": [], "val_fm": [], "val_lfc": []}
 
     print("\n=== Training ===")
@@ -205,14 +202,13 @@ def train(cfg: Dict) -> None:
         model.train()
         train_fm_losses, train_lfc_losses = [], []
 
-        for x0, x1_log1p, x1_counts, esm_emb in train_loader:
+        for x0, x1_log1p, esm_emb in train_loader:
             x0 = x0.to(device)
             x1_log1p = x1_log1p.to(device)
-            x1_counts = x1_counts.to(device)
             esm_emb = esm_emb.to(device)
 
             optimizer.zero_grad()
-            result = model.compute_loss(x0, x1_log1p, x1_counts, esm_emb)
+            result = model.compute_loss(x0, x1_log1p, esm_emb)
             result["loss"].backward()
             nn.utils.clip_grad_norm_(model.parameters(), cfg["grad_clip"])
             optimizer.step()
@@ -229,12 +225,11 @@ def train(cfg: Dict) -> None:
         model.eval()
         val_fm_losses, val_lfc_losses = [], []
         with torch.no_grad():
-            for x0, x1_log1p, x1_counts, esm_emb in val_loader:
+            for x0, x1_log1p, esm_emb in val_loader:
                 x0 = x0.to(device)
                 x1_log1p = x1_log1p.to(device)
-                x1_counts = x1_counts.to(device)
                 esm_emb = esm_emb.to(device)
-                result = model.compute_loss(x0, x1_log1p, x1_counts, esm_emb)
+                result = model.compute_loss(x0, x1_log1p, esm_emb)
                 val_fm_losses.append(result["loss_fm"])
                 val_lfc_losses.append(result["loss_lfc"])
 
@@ -262,30 +257,34 @@ def train(cfg: Dict) -> None:
             )
             m = agg["mean"]
             val_pearson = m["pearson_r"]
-            val_pds = m["pds"]
-            # Combined score: Pearson r + (PDS - 0.5) puts both on similar scale
-            val_score = val_pearson + (val_pds - 0.5)
+            val_pds_vcc = m["pds_vcc"]
+            # VCC-aligned selection score. Subtracts the structural N=15
+            # baseline 0.533 from PDS-VCC so 0 means "no better than constant
+            # prediction". Uses VCC's L1/target-excluded PDS, which is what
+            # the leaderboard actually scores.
+            val_score = val_pearson + (val_pds_vcc - 0.533)
             print(
                 f"  mean Pearson r: {val_pearson:.4f}  "
-                f"PDS: {val_pds:.4f}  score: {val_score:.4f}  "
-                f"mean E-dist: {m['e_distance']:.4f}\n"
+                f"PDS-VCC: {val_pds_vcc:.4f}  "
+                f"score: {val_score:.4f}\n"
             )
-            if val_score > best_val_pearson:
-                best_val_pearson = val_score
-                ckpt_path = save_dir / "best_model.pt"
+
+            if val_score > best_val_score:
+                best_val_score = val_score
                 torch.save(
                     {
                         "epoch": epoch,
                         "model_state_dict": model.state_dict(),
                         "optimizer_state_dict": optimizer.state_dict(),
                         "val_pearson": val_pearson,
-                        "val_pds": val_pds,
+                        "val_pds_vcc": val_pds_vcc,
                         "val_score": val_score,
                         "cfg": cfg,
                     },
-                    ckpt_path,
+                    save_dir / "best_model.pt",
                 )
-                print(f"  ✓ Saved best model  (score={best_val_pearson:.4f})")
+                print(f"  ✓ Saved best_model.pt  (score={best_val_score:.4f})")
+
             model.train()
 
     # Save loss history.
@@ -293,7 +292,7 @@ def train(cfg: Dict) -> None:
         json.dump(loss_history, f, indent=2)
     with open(save_dir / "config.json", "w") as f:
         json.dump(cfg, f, indent=2)
-    print(f"\nTraining complete. Best val score (Pearson r + PDS - 0.5): {best_val_pearson:.4f}")
+    print(f"\nTraining complete. Best val score (Pearson r + PDS-VCC - 0.533): {best_val_score:.4f}")
 
 
 # ---------------------------------------------------------------------------

@@ -66,7 +66,6 @@ def main() -> None:
         hidden_dim=cfg["hidden_dim"],
         num_layers=cfg["num_layers"],
         dropout=cfg["dropout"],
-        lambda_nb=cfg["lambda_nb"],
         lambda_lfc=cfg["lambda_lfc"],
     ).to(device)
 

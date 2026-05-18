@@ -23,7 +23,7 @@ import yaml
 from perturbation_fm.data.preprocess import preprocess
 from perturbation_fm.evaluation.metrics import (
     evaluate_perturbation,
-    perturbation_discrimination_score,
+    vcc_perturbation_discrimination_score,
 )
 from perturbation_fm.model.full_model import PerturbationFlowModel
 
@@ -56,7 +56,6 @@ def main() -> None:
         hidden_dim=cfg["hidden_dim"],
         num_layers=cfg["num_layers"],
         dropout=cfg["dropout"],
-        lambda_nb=cfg["lambda_nb"],
         lambda_lfc=cfg["lambda_lfc"],
     ).to(device)
 
@@ -108,7 +107,9 @@ def main() -> None:
 
     pred_lfcs = {g: m["_pred_lfc"] for g, m in per_pert.items()}
     true_lfcs = {g: m["_true_lfc"] for g, m in per_pert.items()}
-    train_pds = perturbation_discrimination_score(pred_lfcs, true_lfcs)
+    train_pds = vcc_perturbation_discrimination_score(
+        pred_lfcs, true_lfcs, gene_names_list,
+    )
 
     print("=" * 70)
     print(f"TRAINING perturbation evaluation ({len(per_pert)} perturbations)")
@@ -119,7 +120,7 @@ def main() -> None:
     print(f"Mean E-dist:      {means['e_distance']:.4f}")
     print(f"Mean SW2:         {means['sliced_w2']:.4f}")
     print(f"Mean Var-corr:    {means['variance_corr']:.4f}")
-    print(f"TRAIN PDS:        {train_pds:.4f}  [1.0 = perfect, 0.5 = random]")
+    print(f"TRAIN PDS-VCC:    {train_pds:.4f}  [1.0 = perfect]")
 
 
 if __name__ == "__main__":

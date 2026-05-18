@@ -65,7 +65,6 @@ def main() -> None:
         hidden_dim=cfg["hidden_dim"],
         num_layers=cfg["num_layers"],
         dropout=cfg["dropout"],
-        lambda_nb=cfg["lambda_nb"],
         lambda_lfc=cfg["lambda_lfc"],
     ).to(device)
 
@@ -105,8 +104,7 @@ def main() -> None:
     print("=" * 70)
     print(f"Pearson r       : {m['pearson_r']:.4f}")
     print(f"Wtd-cos         : {m['weighted_cos']:.4f}")
-    print(f"PDS (ours, L2)  : {m['pds']:.4f}")
-    print(f"PDS (VCC, L1)   : {m['pds_vcc']:.4f}")
+    print(f"PDS (VCC)       : {m['pds_vcc']:.4f}")
     print(f"DES (VCC)       : {m['des']:.4f}")
     print(f"MAE (VCC)       : {m['mae']:.4f}")
     print(f"KD-ok rate      : {m['knockdown_ok_rate']:.4f}")

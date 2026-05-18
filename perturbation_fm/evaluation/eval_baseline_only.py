@@ -18,7 +18,6 @@ from perturbation_fm.data.preprocess import preprocess
 from perturbation_fm.evaluation.metrics import (
     pearson_lfc,
     weighted_cosine_lfc,
-    perturbation_discrimination_score,
     diff_expression_score,
     mae_pseudobulk,
     vcc_perturbation_discrimination_score,
@@ -46,7 +45,7 @@ def main() -> None:
     model = PerturbationFlowModel(
         n_genes=data_dict["n_genes"], esm_dim=cfg["esm_dim"],
         hidden_dim=cfg["hidden_dim"], num_layers=cfg["num_layers"],
-        dropout=cfg["dropout"], lambda_nb=cfg["lambda_nb"],
+        dropout=cfg["dropout"],
         lambda_lfc=cfg["lambda_lfc"],
     ).to(device)
     ckpt = torch.load(args.ckpt, map_location=device)
@@ -117,8 +116,7 @@ def main() -> None:
         f"{float(np.nanmean(des_list)):>8.4f} {float(np.mean(mae_list)):>8.4f}"
     )
     print()
-    print(f"PDS (ours, L2):  {perturbation_discrimination_score(pred_lfcs, true_lfcs):.4f}")
-    print(f"PDS (VCC, L1):   {vcc_perturbation_discrimination_score(pred_lfcs, true_lfcs, gene_names_list):.4f}")
+    print(f"PDS (VCC):       {vcc_perturbation_discrimination_score(pred_lfcs, true_lfcs, gene_names_list):.4f}")
     print()
     print("These numbers scale the model's VCC score. The cell-mean baseline")
     print("predicts the SAME LFC for every perturbation, so PDS-VCC ≈ 0.5")

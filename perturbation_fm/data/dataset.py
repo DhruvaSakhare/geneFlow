@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader, Dataset
 
 
 class PerturbationDataset(Dataset):
-    """Returns (x0_log1p, x1_log1p, x1_counts, esm_emb) tuples.
+    """Returns (x0_log1p, x1_log1p, esm_emb) tuples.
 
     Each index maps to a single perturbed cell (x1).  A random control cell
     (x0) is sampled on the fly so every epoch sees different (x0, x1) pairs.
@@ -19,13 +19,11 @@ class PerturbationDataset(Dataset):
     def __init__(
         self,
         log1p_data: np.ndarray,
-        counts_data: np.ndarray,
         gene_targets: List[str],
         ctrl_mask: np.ndarray,
         gene_emb_map: Dict[str, torch.Tensor],
     ) -> None:
         self.log1p = log1p_data
-        self.counts = counts_data
         self.gene_targets = np.asarray(gene_targets)
         self.ctrl_mask = np.asarray(ctrl_mask, dtype=bool)
         self.gene_emb_map = gene_emb_map
@@ -47,11 +45,10 @@ class PerturbationDataset(Dataset):
 
     def __getitem__(
         self, idx: int
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         pert_cell_idx = self.pert_indices[idx]
 
         x1_log1p = torch.from_numpy(self.log1p[pert_cell_idx]).float()
-        x1_counts = torch.from_numpy(self.counts[pert_cell_idx]).float()
 
         ctrl_idx = int(np.random.choice(self.ctrl_indices))
         x0_log1p = torch.from_numpy(self.log1p[ctrl_idx]).float()
@@ -61,7 +58,7 @@ class PerturbationDataset(Dataset):
         if esm_emb is None:
             esm_emb = torch.zeros(self._esm_dim, dtype=torch.float32)
 
-        return x0_log1p, x1_log1p, x1_counts, esm_emb.float()
+        return x0_log1p, x1_log1p, esm_emb.float()
 
 
 class BalancedPerturbationBatchSampler:
