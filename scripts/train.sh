@@ -1,21 +1,36 @@
-#!/bin/bash
-#SBATCH --job-name=geneflow-train
-#SBATCH --output=logs/train_%j.out
-#SBATCH --error=logs/train_%j.err
-#SBATCH --time=24:00:00
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
-#SBATCH --gres=gpu:1             # ← 1 GPU; change type e.g. gpu:a100:1
-#SBATCH --partition=gpu          # ← change to your cluster's GPU partition
+#!/bin/sh
+### DTU GBAR LSF submission script for FlowNet training on a single A100.
+### Submit with:   bsub < scripts/train.sh
+### Check status:  bstat -u $USER     |   bjobs
+### Kill:          bkill <jobid>
 
-# ── adjust to match your cluster's modules ──
-module load python/3.11
+#BSUB -J geneflow-train
+#BSUB -q gpua100
+#BSUB -gpu "num=1:mode=exclusive_process"
+#BSUB -n 8
+#BSUB -R "rusage[mem=8GB]"
+#BSUB -R "span[hosts=1]"
+#BSUB -W 24:00
+#BSUB -o logs/train_%J.out
+#BSUB -e logs/train_%J.err
+#BSUB -N
+
+# ---------- Modules ----------
 module load cuda/12.1
 
-cd $SLURM_SUBMIT_DIR
-source .venv/bin/activate
+# ---------- Activate conda env ----------
+source /work3/s225191/miniforge3/bin/activate geneflow
 
+cd $LS_SUBCWD
 mkdir -p logs checkpoints
+
+# ---------- Run ----------
+echo "Job ID: $LSB_JOBID"
+echo "Node:   $(hostname)"
+echo "Start:  $(date)"
+nvidia-smi
 
 python -m perturbation_fm.training.train \
     --config perturbation_fm/configs/default.yaml
+
+echo "End: $(date)"
